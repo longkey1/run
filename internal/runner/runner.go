@@ -1,11 +1,13 @@
 package runner
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // ExitError carries the exit code of a failed command so it can be
@@ -40,4 +42,26 @@ func Run(command, dir string, args, extraEnv []string, stdin io.Reader, stdout, 
 		return err
 	}
 	return nil
+}
+
+// Capture executes a command string with `sh -c` in the given
+// directory and returns its stdout with trailing newlines trimmed,
+// like $(...) command substitution. extraEnv entries ("name=value")
+// are appended to the current environment and stderr passes through.
+// A failure is a plain error, not an ExitError: the captured command's
+// exit code must not masquerade as the run command's own.
+func Capture(command, dir string, extraEnv []string, stderr io.Writer) (string, error) {
+	cmd := exec.Command("sh", "-c", command)
+	cmd.Dir = dir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(out.String(), "\n"), nil
 }

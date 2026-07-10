@@ -14,9 +14,50 @@ import (
 // every command in the file. Includes name further command files whose
 // commands are merged into the top level.
 type Config struct {
-	Env      map[string]string  `yaml:"env"`
+	Env      map[string]Value   `yaml:"env"`
 	Includes []string           `yaml:"includes"`
 	Commands map[string]Command `yaml:"commands"`
+}
+
+// Value is a string setting that is either literal or dynamic. The
+// dynamic form ({run: ...}) names a shell command whose stdout (with
+// trailing newlines trimmed, like $(...) substitution) becomes the
+// value when the resolved command is executed.
+type Value struct {
+	Literal string
+	Run     string
+}
+
+// IsDynamic reports whether the value is computed by a shell command
+// rather than taken literally.
+func (v Value) IsDynamic() bool { return v.Run != "" }
+
+// UnmarshalYAML accepts a plain scalar (literal value) or a mapping
+// with a single non-empty "run" key (dynamic value).
+func (v *Value) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return node.Decode(&v.Literal)
+	case yaml.MappingNode:
+		for i := 0; i < len(node.Content); i += 2 {
+			if key := node.Content[i].Value; key != "run" {
+				return fmt.Errorf("line %d: unknown key %q in dynamic value (only \"run\" is allowed)", node.Content[i].Line, key)
+			}
+		}
+		var m struct {
+			Run string `yaml:"run"`
+		}
+		if err := node.Decode(&m); err != nil {
+			return err
+		}
+		if m.Run == "" {
+			return fmt.Errorf("line %d: dynamic value must have a non-empty run", node.Line)
+		}
+		v.Run = m.Run
+		return nil
+	default:
+		return fmt.Errorf("line %d: value must be a string or {run: ...}", node.Line)
+	}
 }
 
 // Command represents a single command definition. A command may define
@@ -28,7 +69,7 @@ type Command struct {
 	Description string             `yaml:"description"`
 	Run         string             `yaml:"run"`
 	Includes    []string           `yaml:"includes"`
-	Env         map[string]string  `yaml:"env"`
+	Env         map[string]Value   `yaml:"env"`
 	Args        []Arg              `yaml:"args"`
 	Flags       []Flag             `yaml:"flags"`
 	Commands    map[string]Command `yaml:"commands"`
@@ -38,9 +79,9 @@ type Command struct {
 // Default is a pointer to distinguish an absent default (required
 // argument) from an explicit empty-string default.
 type Arg struct {
-	Name        string  `yaml:"name"`
-	Description string  `yaml:"description"`
-	Default     *string `yaml:"default"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Default     *Value `yaml:"default"`
 }
 
 // Flag declares a named long-form option (--name) for a command's run
@@ -49,10 +90,10 @@ type Arg struct {
 // default from an explicit empty-string default; it is only valid for
 // value options.
 type Flag struct {
-	Name        string  `yaml:"name"`
-	Description string  `yaml:"description"`
-	Type        string  `yaml:"type"`
-	Default     *string `yaml:"default"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Type        string `yaml:"type"`
+	Default     *Value `yaml:"default"`
 }
 
 // IsBool reports whether the flag is a boolean flag rather than a
@@ -161,7 +202,7 @@ func expandIncludes(cmds map[string]Command, includes []string, dir, prefix stri
 					continue
 				}
 				if c.Env == nil {
-					c.Env = make(map[string]string, len(sub.Env))
+					c.Env = make(map[string]Value, len(sub.Env))
 				}
 				c.Env[k] = v
 			}
@@ -222,9 +263,10 @@ func validateCommands(cmds map[string]Command, prefix string) error {
 	return nil
 }
 
-// validateEnv checks environment variable names. Values are literal
-// strings and may be anything, including empty.
-func validateEnv(env map[string]string, full string) error {
+// validateEnv checks environment variable names. Literal values may
+// be anything, including empty; the shape of dynamic values is
+// enforced at unmarshal time.
+func validateEnv(env map[string]Value, full string) error {
 	scope := "top-level env"
 	if full != "" {
 		scope = fmt.Sprintf("command %q", full)

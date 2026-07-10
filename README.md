@@ -96,6 +96,7 @@ run deploy             # error: command "deploy": missing required argument "env
 - Each declared argument is available both positionally (`$1`, ...) and as an environment variable named after it (`$env`, `$region`). Defaults are applied to both.
 - Arguments beyond the declaration are still passed through (`"$@"` includes them), so declarations and pass-through wrappers compose.
 - Commands without `args:` accept any number of arguments without validation.
+- A `default` may also be computed by a shell command — see [Dynamic values](#dynamic-values).
 - `run self list` shows the signature: `deploy <env> [region]` (`<...>` required, `[...]` has a default).
 
 ### Declared flags
@@ -129,6 +130,7 @@ run deploy prod --typo                 # error: unknown flag --typo
 - Flags are also re-appended to the positional parameters *after* all positionals, normalized to `--name value` / `--name` in declaration order. `$1..$n` are always the plain arguments, and `"$@"` forwards everything — flags included — to a wrapped command. Defaults materialize there too (like `args:` defaults); a bool that wasn't passed and a value option with no value are omitted.
 - Only long form is supported. Single-dash tokens (`-x`) are always ordinary arguments. A repeated flag: the last one wins. A space-form value is taken literally even if it starts with `--` (use `--name=value` when the value looks like a flag).
 - Unknown `--x` is an error only for commands that declare `flags:`; commands without `flags:` pass everything through untouched. Tokens after `--` are always literal arguments, never flags.
+- A value option's `default` may also be computed by a shell command — see [Dynamic values](#dynamic-values).
 - `run self list` shows flags after the argument signature: `deploy <env> [--force] [--from <from>]`.
 
 ## Environment variables
@@ -157,7 +159,34 @@ commands:
 
 - Top-level `env:` applies to every command in the file; a command's `env:` applies to the command and its subcommands.
 - Precedence (lowest to highest): inherited OS environment < top-level `env` < ancestor command `env` (outer to inner) < the resolved command's `env` < declared-argument and declared-flag variables.
-- Values are literal strings — `run` performs no `$VAR`/`${VAR}` expansion in them. Variable references written in `run:` are still expanded by the shell at execution time, so `run: echo "$APP_ENV"` works as expected.
+- Values are literal strings — `run` performs no `$VAR`/`${VAR}` expansion in them. Variable references written in `run:` are still expanded by the shell at execution time, so `run: echo "$APP_ENV"` works as expected. To compute a value with a shell command, use the explicit `{run: ...}` form — see [Dynamic values](#dynamic-values).
+
+## Dynamic values
+
+`env:` values and `args:`/`flags:` defaults are literal strings by default. The mapping form `{run: ...}` opts a single value into dynamic evaluation: the shell command's stdout (with trailing newlines trimmed, like `$(...)` substitution) becomes the value.
+
+```yaml
+env:
+  TODAY:
+    run: date +%F              # computed once per invocation
+commands:
+  report:
+    args:
+      - name: date
+        default:
+          run: echo "$TODAY"   # defaults can reference resolved env values
+    run: echo "report for $1"
+```
+
+```sh
+run report                # report for 2026-07-10
+run report 2020-01-01     # report for 2020-01-01 (the default's command does not run)
+```
+
+- Evaluation happens only when a command is executed — never for `run self list` or shell completion — and only for the values that invocation actually uses: an overridden dynamic `env` entry and an unused default are never run.
+- Dynamic `env` values see the OS environment plus the literal `env` entries; they cannot reference other dynamic `env` values. Defaults are resolved after `env`, so they see all of it — define a shared value like `TODAY` once and reference it from any default.
+- Dynamic values run with `sh -c` in the same directory as the command itself (the directory containing the command file). A non-zero exit aborts the invocation with an error.
+- Bool flags still may not declare a default, dynamic or otherwise.
 
 ## Includes
 

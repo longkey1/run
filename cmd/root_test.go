@@ -71,6 +71,52 @@ commands:
         default: "2026-01-01"
       - name: label
     run: printf '%s\n' "force=$force from=$from label=$label" "$@"
+  dynenv:
+    env:
+      STAMP:
+        run: echo dyn-value
+      COMBO:
+        run: echo "$GREETING-x"
+    run: echo "$STAMP $COMBO"
+  dyndefault:
+    env:
+      TODAY:
+        run: printf 2026-07-10
+    args:
+      - name: date
+        default:
+          run: printf '%s' "$TODAY"
+    flags:
+      - name: from
+        default:
+          run: printf f-default
+    run: printf '%s\n' "date=$date from=$from" "$@"
+  dynskip:
+    args:
+      - name: v
+        default:
+          run: 'echo ran > "$MARKER"; printf d'
+    run: printf '%s\n' "$1"
+  dynfail:
+    env:
+      BAD:
+        run: exit 3
+    run: echo unreachable
+  dynfaildefault:
+    args:
+      - name: v
+        default:
+          run: exit 2
+    run: echo unreachable
+  dynoverride:
+    env:
+      X:
+        run: exit 1
+    commands:
+      inner:
+        env:
+          X: literal
+        run: echo "$X"
 `
 
 // execCommand runs runCommand against a temp command file and captures
@@ -254,6 +300,36 @@ func TestRunCommand(t *testing.T) {
 			args:    []string{"echo", "--whatever", "-x"},
 			wantOut: "--whatever\n-x\n",
 		},
+		{
+			name:    "dynamic env resolved with trailing newline trimmed",
+			args:    []string{"dynenv"},
+			wantOut: "dyn-value hello-x\n",
+		},
+		{
+			name:    "dynamic defaults fill env vars and positionals",
+			args:    []string{"dyndefault"},
+			wantOut: "date=2026-07-10 from=f-default\n2026-07-10\n--from\nf-default\n",
+		},
+		{
+			name:    "explicit values override dynamic defaults",
+			args:    []string{"dyndefault", "2020-01-01", "--from", "cli"},
+			wantOut: "date=2020-01-01 from=cli\n2020-01-01\n--from\ncli\n",
+		},
+		{
+			name:    "dynamic env failure",
+			args:    []string{"dynfail"},
+			wantErr: `command "dynfail": env "BAD"`,
+		},
+		{
+			name:    "dynamic default failure",
+			args:    []string{"dynfaildefault"},
+			wantErr: `command "dynfaildefault": default for argument "v"`,
+		},
+		{
+			name:    "overridden dynamic env never runs",
+			args:    []string{"dynoverride", "inner"},
+			wantOut: "literal\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -272,6 +348,35 @@ func TestRunCommand(t *testing.T) {
 				t.Errorf("runCommand() output = %q, want %q", out, tt.wantOut)
 			}
 		})
+	}
+}
+
+// TestRunCommandDynamicDefaultLazy verifies that a dynamic default's
+// command only runs when the default is actually used.
+func TestRunCommandDynamicDefaultLazy(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "marker")
+	t.Setenv("MARKER", marker)
+
+	out, err := execCommand(t, []string{"dynskip", "explicit"})
+	if err != nil {
+		t.Fatalf("runCommand() error = %v", err)
+	}
+	if want := "explicit\n"; out != want {
+		t.Errorf("runCommand() output = %q, want %q", out, want)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("default command ran despite explicit value (marker stat err = %v)", err)
+	}
+
+	out, err = execCommand(t, []string{"dynskip"})
+	if err != nil {
+		t.Fatalf("runCommand() error = %v", err)
+	}
+	if want := "d\n"; out != want {
+		t.Errorf("runCommand() output = %q, want %q", out, want)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("default command did not run: %v", err)
 	}
 }
 

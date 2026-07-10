@@ -8,7 +8,10 @@ import (
 	"testing"
 )
 
-func ptr(s string) *string { return &s }
+// lit and dyn build pointers to literal and dynamic values for
+// expected defaults.
+func lit(s string) *Value { return &Value{Literal: s} }
+func dyn(s string) *Value { return &Value{Run: s} }
 
 // writeFile creates a file with the given content, creating parent
 // directories as needed.
@@ -29,7 +32,7 @@ func TestLoad(t *testing.T) {
 		name    string
 		content string
 		want    map[string]Command
-		wantEnv map[string]string
+		wantEnv map[string]Value
 		wantErr bool
 	}{
 		{
@@ -108,8 +111,8 @@ commands:
 					Run: `./deploy.sh "$env" "$region"`,
 					Args: []Arg{
 						{Name: "env", Description: "target environment"},
-						{Name: "region", Default: ptr("us-east-1")},
-						{Name: "empty-default", Default: ptr("")},
+						{Name: "region", Default: lit("us-east-1")},
+						{Name: "empty-default", Default: lit("")},
 					},
 				},
 			},
@@ -137,9 +140,9 @@ commands:
 					Run: "./deploy.sh",
 					Flags: []Flag{
 						{Name: "force", Type: "bool", Description: "skip confirmation"},
-						{Name: "from", Default: ptr("2026-01-01")},
+						{Name: "from", Default: lit("2026-01-01")},
 						{Name: "mode", Type: "string"},
-						{Name: "empty", Default: ptr("")},
+						{Name: "empty", Default: lit("")},
 						{Name: "label"},
 					},
 				},
@@ -165,17 +168,72 @@ commands:
 `,
 			want: map[string]Command{
 				"deploy": {
-					Env: map[string]string{"SCOPE": "command"},
+					Env: map[string]Value{"SCOPE": {Literal: "command"}},
 					Run: "./deploy.sh",
 					Commands: map[string]Command{
 						"staging": {
-							Env: map[string]string{"SCOPE": "staging", "EMPTY": ""},
+							Env: map[string]Value{"SCOPE": {Literal: "staging"}, "EMPTY": {}},
 							Run: "./deploy.sh staging",
 						},
 					},
 				},
 			},
-			wantEnv: map[string]string{"GREETING": "hello", "SCOPE": "top"},
+			wantEnv: map[string]Value{"GREETING": {Literal: "hello"}, "SCOPE": {Literal: "top"}},
+		},
+		{
+			name: "dynamic env and defaults",
+			content: `
+env:
+  TODAY:
+    run: date +%F
+commands:
+  report:
+    env:
+      STAMP:
+        run: date +%s
+    args:
+      - name: date
+        default:
+          run: echo "$TODAY"
+    flags:
+      - name: from
+        default:
+          run: echo start
+    run: echo "$1"
+`,
+			want: map[string]Command{
+				"report": {
+					Env: map[string]Value{"STAMP": {Run: "date +%s"}},
+					Args: []Arg{
+						{Name: "date", Default: dyn(`echo "$TODAY"`)},
+					},
+					Flags: []Flag{
+						{Name: "from", Default: dyn("echo start")},
+					},
+					Run: `echo "$1"`,
+				},
+			},
+			wantEnv: map[string]Value{"TODAY": {Run: "date +%F"}},
+		},
+		{
+			name:    "dynamic value with empty run",
+			content: "commands:\n  build:\n    run: go build\n    env:\n      A:\n        run: \"\"\n",
+			wantErr: true,
+		},
+		{
+			name:    "dynamic value with unknown key",
+			content: "commands:\n  build:\n    run: go build\n    env:\n      A:\n        run: date\n        extra: x\n",
+			wantErr: true,
+		},
+		{
+			name:    "sequence env value",
+			content: "commands:\n  build:\n    run: go build\n    env:\n      A:\n        - x\n",
+			wantErr: true,
+		},
+		{
+			name:    "bool flag with dynamic default",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: force\n        type: bool\n        default:\n          run: echo true\n",
+			wantErr: true,
 		},
 		{
 			name:    "top-level env with empty key",
@@ -511,7 +569,7 @@ commands:
 			want: map[string]Command{
 				"local": {Run: "echo local"},
 				"inc": {
-					Env: map[string]string{"A": "own", "B": "file"},
+					Env: map[string]Value{"A": {Literal: "own"}, "B": {Literal: "file"}},
 					Run: "echo inc",
 				},
 			},
@@ -541,7 +599,7 @@ commands:
 			entry: ".run.yaml",
 			want: map[string]Command{
 				"c": {
-					Env: map[string]string{"A": "inner", "B": "outer"},
+					Env: map[string]Value{"A": {Literal: "inner"}, "B": {Literal: "outer"}},
 					Run: "echo c",
 				},
 			},

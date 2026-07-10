@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"slices"
@@ -133,9 +134,11 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	cmds := cfg.Commands
 	var command config.Command
 	// Environment variables merge from outer to inner scopes, so
-	// deeper definitions override same-named keys.
-	env := make(map[string]string, len(cfg.Env))
-	maps.Copy(env, cfg.Env)
+	// deeper definitions override same-named keys. Values stay
+	// unevaluated until the command is known to execute, so overridden
+	// dynamic entries never run.
+	envVals := make(map[string]config.Value, len(cfg.Env))
+	maps.Copy(envVals, cfg.Env)
 	n := 0
 	for n < len(path) {
 		c, ok := cmds[path[n]]
@@ -143,7 +146,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 			break
 		}
 		command = c
-		maps.Copy(env, c.Env)
+		maps.Copy(envVals, c.Env)
 		cmds = c.Commands
 		n++
 	}
@@ -166,7 +169,20 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return listCommands(cmd.OutOrStdout(), command.Commands, name)
 	}
 
-	positional, flagArgs, flagEnv, err := applyFlags(command, name, rest)
+	env, err := resolveEnv(envVals, workDir, name, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	// resolve evaluates a declared default. Dynamic defaults see the
+	// fully resolved env, so they can reference shared values.
+	resolve := func(v config.Value) (string, error) {
+		if !v.IsDynamic() {
+			return v.Literal, nil
+		}
+		return runner.Capture(v.Run, workDir, envList(env), cmd.ErrOrStderr())
+	}
+
+	positional, flagArgs, flagEnv, err := applyFlags(command, name, rest, resolve)
 	if err != nil {
 		return err
 	}
@@ -177,7 +193,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	}
 	// slices.Concat, not append: in the no-flags passthrough case
 	// positional aliases the args backing array, which literal follows.
-	cmdArgs, argEnv, err := applyArgs(command, name, slices.Concat(positional, literal))
+	cmdArgs, argEnv, err := applyArgs(command, name, slices.Concat(positional, literal), resolve)
 	if err != nil {
 		return err
 	}
@@ -190,8 +206,9 @@ func runCommand(cmd *cobra.Command, args []string) error {
 // applyArgs validates CLI arguments against the command's declared
 // args, fills in defaults for missing trailing arguments, and builds an
 // environment variable for each declared argument. Arguments beyond
-// the declaration are passed through untouched.
-func applyArgs(command config.Command, name string, args []string) ([]string, map[string]string, error) {
+// the declaration are passed through untouched. Defaults resolve
+// lazily — a dynamic default only runs when it is actually used.
+func applyArgs(command config.Command, name string, args []string, resolve func(config.Value) (string, error)) ([]string, map[string]string, error) {
 	if len(command.Args) == 0 {
 		return args, nil, nil
 	}
@@ -203,7 +220,11 @@ func applyArgs(command config.Command, name string, args []string) ([]string, ma
 		case i < len(args):
 			value = args[i]
 		case decl.Default != nil:
-			value = *decl.Default
+			v, err := resolve(*decl.Default)
+			if err != nil {
+				return nil, nil, fmt.Errorf("command %q: default for argument %q: %w", name, decl.Name, err)
+			}
+			value = v
 			final = append(final, value)
 		default:
 			return nil, nil, fmt.Errorf("command %q: missing required argument %q", name, decl.Name)
@@ -223,7 +244,9 @@ func applyArgs(command config.Command, name string, args []string) ([]string, ma
 // "". Value options that are unset and have no default are omitted
 // from the normalized tokens. Repeated flags: the last one wins.
 // Commands without a flags declaration are passed through untouched.
-func applyFlags(command config.Command, name string, args []string) (positional, flagArgs []string, env map[string]string, err error) {
+// Defaults resolve lazily — a dynamic default only runs when it is
+// actually used.
+func applyFlags(command config.Command, name string, args []string, resolve func(config.Value) (string, error)) (positional, flagArgs []string, env map[string]string, err error) {
 	if len(command.Flags) == 0 {
 		return args, nil, nil, nil
 	}
@@ -277,12 +300,47 @@ func applyFlags(command config.Command, name string, args []string) (positional,
 				env[decl.Name] = ""
 				continue
 			}
-			value = *decl.Default // defaults materialize into "$@" like args defaults
+			v, rerr := resolve(*decl.Default)
+			if rerr != nil {
+				return nil, nil, nil, fmt.Errorf("command %q: default for flag --%s: %w", name, decl.Name, rerr)
+			}
+			value = v // defaults materialize into "$@" like args defaults
 		}
 		env[decl.Name] = value
 		flagArgs = append(flagArgs, "--"+decl.Name, value)
 	}
 	return positional, flagArgs, env, nil
+}
+
+// resolveEnv converts the merged env declarations to concrete strings,
+// running dynamic values with sh in dir. A dynamic value sees the
+// process environment plus the literal entries only — dynamic entries
+// cannot reference one another, so no evaluation order is observable
+// through the values; they still run in name order to keep any side
+// effects deterministic.
+func resolveEnv(env map[string]config.Value, dir, name string, stderr io.Writer) (map[string]string, error) {
+	resolved := make(map[string]string, len(env))
+	var dynamic []string
+	for k, v := range env {
+		if v.IsDynamic() {
+			dynamic = append(dynamic, k)
+			continue
+		}
+		resolved[k] = v.Literal
+	}
+	if len(dynamic) == 0 {
+		return resolved, nil
+	}
+	slices.Sort(dynamic)
+	literals := envList(resolved)
+	for _, k := range dynamic {
+		out, err := runner.Capture(env[k].Run, dir, literals, stderr)
+		if err != nil {
+			return nil, fmt.Errorf("command %q: env %q: %w", name, k, err)
+		}
+		resolved[k] = out
+	}
+	return resolved, nil
 }
 
 // envList converts an env map to sorted "name=value" pairs so the
