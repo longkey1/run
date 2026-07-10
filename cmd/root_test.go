@@ -59,6 +59,18 @@ commands:
     commands:
       sub:
         run: echo sub
+  flagcmd:
+    env:
+      from: from-env
+    args:
+      - name: target
+    flags:
+      - name: force
+        type: bool
+      - name: from
+        default: "2026-01-01"
+      - name: label
+    run: printf '%s\n' "force=$force from=$from label=$label" "$@"
 `
 
 // execCommand runs runCommand against a temp command file and captures
@@ -166,6 +178,81 @@ func TestRunCommand(t *testing.T) {
 			name:    "declared arg overrides command env",
 			args:    []string{"envarg", "cli"},
 			wantOut: "cli\n",
+		},
+		{
+			name:    "bool flag set and normalized after positionals",
+			args:    []string{"flagcmd", "t", "--force"},
+			wantOut: "force=true from=2026-01-01 label=\nt\n--force\n--from\n2026-01-01\n",
+		},
+		{
+			name:    "bool flag unset and flag default overrides command env",
+			args:    []string{"flagcmd", "t"},
+			wantOut: "force=false from=2026-01-01 label=\nt\n--from\n2026-01-01\n",
+		},
+		{
+			name:    "value flag space form",
+			args:    []string{"flagcmd", "t", "--from", "2026-04-01"},
+			wantOut: "force=false from=2026-04-01 label=\nt\n--from\n2026-04-01\n",
+		},
+		{
+			name:    "value flag equals form",
+			args:    []string{"flagcmd", "t", "--from=2026-04-01"},
+			wantOut: "force=false from=2026-04-01 label=\nt\n--from\n2026-04-01\n",
+		},
+		{
+			name:    "flag before positional keeps $1 stable",
+			args:    []string{"flagcmd", "--force", "t"},
+			wantOut: "force=true from=2026-01-01 label=\nt\n--force\n--from\n2026-01-01\n",
+		},
+		{
+			name:    "unknown flag",
+			args:    []string{"flagcmd", "t", "--bogus"},
+			wantErr: `unknown flag --bogus`,
+		},
+		{
+			name:    "bool flag rejects a value",
+			args:    []string{"flagcmd", "t", "--force=yes"},
+			wantErr: `flag --force does not take a value`,
+		},
+		{
+			name:    "value flag missing value",
+			args:    []string{"flagcmd", "t", "--from"},
+			wantErr: `flag --from requires a value`,
+		},
+		{
+			name:    "repeated flag last wins",
+			args:    []string{"flagcmd", "t", "--from", "a", "--from", "b"},
+			wantOut: "force=false from=b label=\nt\n--from\nb\n",
+		},
+		{
+			name:    "space form value taken literally",
+			args:    []string{"flagcmd", "t", "--label", "--force"},
+			wantOut: "force=false from=2026-01-01 label=--force\nt\n--from\n2026-01-01\n--label\n--force\n",
+		},
+		{
+			name:    "single dash token is positional",
+			args:    []string{"flagcmd", "-x"},
+			wantOut: "force=false from=2026-01-01 label=\n-x\n--from\n2026-01-01\n",
+		},
+		{
+			name:    "tokens after -- are literal even for flag command",
+			args:    []string{"flagcmd", "--force", "--", "--bogus"},
+			wantOut: "force=true from=2026-01-01 label=\n--bogus\n--force\n--from\n2026-01-01\n",
+		},
+		{
+			name:    "bare token before -- still errors on flag command",
+			args:    []string{"flagcmd", "x", "--force", "--", "y"},
+			wantErr: `command "flagcmd" has no subcommand "x"`,
+		},
+		{
+			name:    "missing required arg with only flags",
+			args:    []string{"flagcmd", "--force"},
+			wantErr: `missing required argument "target"`,
+		},
+		{
+			name:    "command without flags passes --tokens through",
+			args:    []string{"echo", "--whatever", "-x"},
+			wantOut: "--whatever\n-x\n",
 		},
 	}
 

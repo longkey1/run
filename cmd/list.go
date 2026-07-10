@@ -41,7 +41,7 @@ func writeCommands(w io.Writer, cmds map[string]config.Command, prefix string) {
 			full = prefix + " " + name
 		}
 		if c.Run != "" {
-			label := full + argSignature(c.Args)
+			label := full + argSignature(c.Args) + flagSignature(c.Flags)
 			if c.Description == "" {
 				fmt.Fprintf(w, "  %s\n", label)
 			} else {
@@ -61,6 +61,21 @@ func argSignature(args []config.Arg) string {
 			fmt.Fprintf(&b, " [%s]", a.Name)
 		} else {
 			fmt.Fprintf(&b, " <%s>", a.Name)
+		}
+	}
+	return b.String()
+}
+
+// flagSignature renders declared flags after the argument signature.
+// All flags are optional, so every entry is bracketed: " [--name]" for
+// bool flags, " [--name <name>]" for value options.
+func flagSignature(flags []config.Flag) string {
+	var b strings.Builder
+	for _, f := range flags {
+		if f.IsBool() {
+			fmt.Fprintf(&b, " [--%s]", f.Name)
+		} else {
+			fmt.Fprintf(&b, " [--%s <%s>]", f.Name, f.Name)
 		}
 	}
 	return b.String()

@@ -53,6 +53,9 @@ func TestSelfList(t *testing.T) {
 	if !strings.Contains(out, "deploy <env> [region]") {
 		t.Errorf("Execute() output = %q, want command list", out)
 	}
+	if !strings.Contains(out, "flagcmd <target> [--force] [--from <from>] [--label <label>]") {
+		t.Errorf("Execute() output = %q, want flag signature", out)
+	}
 }
 
 func TestSelfCompletionUnsupportedShell(t *testing.T) {

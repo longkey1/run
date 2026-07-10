@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/longkey1/run/internal/config"
@@ -108,7 +109,8 @@ func loadConfig() (*config.Config, string, error) {
 //
 // Arguments stop being command path segments at the first "--", or at
 // the first name that doesn't match a subcommand of a runnable command;
-// the remainder is passed to the run string as positional parameters.
+// the remainder is passed to the run string as positional parameters,
+// after declared flags are extracted from the pre-"--" portion.
 func runCommand(cmd *cobra.Command, args []string) error {
 	cfg, workDir, err := loadConfig()
 	if err != nil {
@@ -116,12 +118,13 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// SetInterspersed(false) leaves a "--" after the command name in args,
-	// so split it off here rather than via ArgsLenAtDash.
+	// so split it off here rather than via ArgsLenAtDash. Tokens after
+	// the first "--" are always literal positionals, never flags.
 	path := args
-	var cmdArgs []string
+	var literal []string
 	explicit := false
 	if i := slices.Index(args, "--"); i >= 0 {
-		path, cmdArgs, explicit = args[:i], args[i+1:], true
+		path, literal, explicit = args[:i], args[i+1:], true
 	}
 	if len(path) == 0 {
 		return runList(cmd)
@@ -148,25 +151,39 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("command %q not found", path[0])
 	}
 	name := strings.Join(path[:n], " ")
+	var rest []string // tokens after the resolved path, before any "--"
 	if n < len(path) {
-		if explicit || command.Run == "" {
+		if command.Run == "" {
 			return fmt.Errorf("command %q has no subcommand %q", name, path[n])
 		}
-		cmdArgs = path[n:]
+		rest = path[n:]
 	}
 
 	if command.Run == "" {
-		if len(cmdArgs) > 0 {
+		if len(literal) > 0 {
 			return fmt.Errorf("command %q has no run", name)
 		}
 		return listCommands(cmd.OutOrStdout(), command.Commands, name)
 	}
 
-	cmdArgs, argEnv, err := applyArgs(command, name, cmdArgs)
+	positional, flagArgs, flagEnv, err := applyFlags(command, name, rest)
 	if err != nil {
 		return err
 	}
-	maps.Copy(env, argEnv) // declared arguments have the highest precedence
+	// With an explicit "--", everything before it must be command path
+	// or declared flags.
+	if explicit && len(positional) > 0 {
+		return fmt.Errorf("command %q has no subcommand %q", name, positional[0])
+	}
+	// slices.Concat, not append: in the no-flags passthrough case
+	// positional aliases the args backing array, which literal follows.
+	cmdArgs, argEnv, err := applyArgs(command, name, slices.Concat(positional, literal))
+	if err != nil {
+		return err
+	}
+	cmdArgs = append(cmdArgs, flagArgs...)
+	maps.Copy(env, flagEnv)
+	maps.Copy(env, argEnv) // declared args and flags have the highest precedence
 	return runner.Run(command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
@@ -194,6 +211,78 @@ func applyArgs(command config.Command, name string, args []string) ([]string, ma
 		env[decl.Name] = value
 	}
 	return final, env, nil
+}
+
+// applyFlags extracts declared long-form flags (--name, --name=value,
+// --name value) from args, leaving everything else as positionals. It
+// returns the positionals, the recognized flags re-normalized as
+// "--name value"/"--name" tokens in declaration order (appended after
+// all positionals so $1..$n stay stable and "$@" forwards everything),
+// and an environment variable per declared flag: bools are
+// "true"/"false", value options get the given value, their default, or
+// "". Value options that are unset and have no default are omitted
+// from the normalized tokens. Repeated flags: the last one wins.
+// Commands without a flags declaration are passed through untouched.
+func applyFlags(command config.Command, name string, args []string) (positional, flagArgs []string, env map[string]string, err error) {
+	if len(command.Flags) == 0 {
+		return args, nil, nil, nil
+	}
+	decls := make(map[string]config.Flag, len(command.Flags))
+	for _, f := range command.Flags {
+		decls[f.Name] = f
+	}
+	bools := make(map[string]bool)
+	values := make(map[string]string)
+	for i := 0; i < len(args); i++ {
+		tok := args[i]
+		if !strings.HasPrefix(tok, "--") {
+			positional = append(positional, tok)
+			continue
+		}
+		flagName, value, hasValue := strings.Cut(tok[2:], "=")
+		decl, ok := decls[flagName]
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("command %q: unknown flag --%s", name, flagName)
+		}
+		if decl.IsBool() {
+			if hasValue {
+				return nil, nil, nil, fmt.Errorf("command %q: flag --%s does not take a value", name, flagName)
+			}
+			bools[flagName] = true
+			continue
+		}
+		if !hasValue {
+			i++
+			if i >= len(args) {
+				return nil, nil, nil, fmt.Errorf("command %q: flag --%s requires a value", name, flagName)
+			}
+			value = args[i] // taken literally, even if it looks like a flag
+		}
+		values[flagName] = value
+	}
+
+	env = make(map[string]string, len(command.Flags))
+	for _, decl := range command.Flags {
+		if decl.IsBool() {
+			set := bools[decl.Name]
+			env[decl.Name] = strconv.FormatBool(set)
+			if set {
+				flagArgs = append(flagArgs, "--"+decl.Name)
+			}
+			continue
+		}
+		value, set := values[decl.Name]
+		if !set {
+			if decl.Default == nil {
+				env[decl.Name] = ""
+				continue
+			}
+			value = *decl.Default // defaults materialize into "$@" like args defaults
+		}
+		env[decl.Name] = value
+		flagArgs = append(flagArgs, "--"+decl.Name, value)
+	}
+	return positional, flagArgs, env, nil
 }
 
 // envList converts an env map to sorted "name=value" pairs so the

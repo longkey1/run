@@ -115,6 +115,37 @@ commands:
 			},
 		},
 		{
+			name: "command with flags",
+			content: `
+commands:
+  deploy:
+    run: ./deploy.sh
+    flags:
+      - name: force
+        type: bool
+        description: skip confirmation
+      - name: from
+        default: "2026-01-01"
+      - name: mode
+        type: string
+      - name: empty
+        default: ""
+      - name: label
+`,
+			want: map[string]Command{
+				"deploy": {
+					Run: "./deploy.sh",
+					Flags: []Flag{
+						{Name: "force", Type: "bool", Description: "skip confirmation"},
+						{Name: "from", Default: ptr("2026-01-01")},
+						{Name: "mode", Type: "string"},
+						{Name: "empty", Default: ptr("")},
+						{Name: "label"},
+					},
+				},
+			},
+		},
+		{
 			name: "top-level and command env",
 			content: `
 env:
@@ -179,6 +210,46 @@ commands:
 		{
 			name:    "required arg after default",
 			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - name: env\n        default: prod\n      - name: region\n",
+			wantErr: true,
+		},
+		{
+			name:    "flags without run",
+			content: "commands:\n  deploy:\n    flags:\n      - name: force\n        type: bool\n    commands:\n      staging:\n        run: ./deploy.sh staging\n",
+			wantErr: true,
+		},
+		{
+			name:    "flag without name",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - type: bool\n",
+			wantErr: true,
+		},
+		{
+			name:    "duplicate flag names",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: force\n      - name: force\n",
+			wantErr: true,
+		},
+		{
+			name:    "flag colliding with arg name",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - name: env\n    flags:\n      - name: env\n",
+			wantErr: true,
+		},
+		{
+			name:    "flag with invalid type",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: count\n        type: int\n",
+			wantErr: true,
+		},
+		{
+			name:    "bool flag with default",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: force\n        type: bool\n        default: \"true\"\n",
+			wantErr: true,
+		},
+		{
+			name:    "flag name containing equals",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: \"a=b\"\n",
+			wantErr: true,
+		},
+		{
+			name:    "flag name with leading dash",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: \"-x\"\n",
 			wantErr: true,
 		},
 		{

@@ -1,6 +1,6 @@
 # run
 
-A CLI runtime: define commands in YAML, and `run` turns them into a command-line interface with subcommands, arguments, environment variables, and shell completion.
+A CLI runtime: define commands in YAML, and `run` turns them into a command-line interface with subcommands, arguments, flags, environment variables, and shell completion.
 
 ## Installation
 
@@ -98,6 +98,39 @@ run deploy             # error: command "deploy": missing required argument "env
 - Commands without `args:` accept any number of arguments without validation.
 - `run self list` shows the signature: `deploy <env> [region]` (`<...>` required, `[...]` has a default).
 
+### Declared flags
+
+A command can declare long-form flags with `flags:` — boolean flags (`type: bool`) and value options (the default):
+
+```yaml
+commands:
+  deploy:
+    description: Deploy the app
+    args:
+      - name: env
+    flags:
+      - name: force
+        type: bool
+        description: skip confirmation
+      - name: from
+        default: "2026-01-01"
+    run: ./deploy.sh
+```
+
+```sh
+run deploy prod --force                # $force=true
+run deploy --force prod                # flags and arguments may be interleaved
+run deploy prod --from 2026-04-01      # $from=2026-04-01
+run deploy prod --from=2026-04-01      # equals form works too
+run deploy prod --typo                 # error: unknown flag --typo
+```
+
+- Every declared flag becomes an environment variable named after it. Bool flags are `true` when passed and `false` otherwise; value options get the given value, their `default`, or the empty string. All flags are optional — there are no required flags.
+- Flags are also re-appended to the positional parameters *after* all positionals, normalized to `--name value` / `--name` in declaration order. `$1..$n` are always the plain arguments, and `"$@"` forwards everything — flags included — to a wrapped command. Defaults materialize there too (like `args:` defaults); a bool that wasn't passed and a value option with no value are omitted.
+- Only long form is supported. Single-dash tokens (`-x`) are always ordinary arguments. A repeated flag: the last one wins. A space-form value is taken literally even if it starts with `--` (use `--name=value` when the value looks like a flag).
+- Unknown `--x` is an error only for commands that declare `flags:`; commands without `flags:` pass everything through untouched. Tokens after `--` are always literal arguments, never flags.
+- `run self list` shows flags after the argument signature: `deploy <env> [--force] [--from <from>]`.
+
 ## Environment variables
 
 Environment variables can be declared with `env:`, at the top level of the command file and/or per command:
@@ -123,7 +156,7 @@ commands:
 `run build` sees `APP_ENV=development`, `run deploy production` sees `APP_ENV=production`, and `run deploy staging` sees `APP_ENV=staging`.
 
 - Top-level `env:` applies to every command in the file; a command's `env:` applies to the command and its subcommands.
-- Precedence (lowest to highest): inherited OS environment < top-level `env` < ancestor command `env` (outer to inner) < the resolved command's `env` < declared-argument variables.
+- Precedence (lowest to highest): inherited OS environment < top-level `env` < ancestor command `env` (outer to inner) < the resolved command's `env` < declared-argument and declared-flag variables.
 - Values are literal strings — `run` performs no `$VAR`/`${VAR}` expansion in them. Variable references written in `run:` are still expanded by the shell at execution time, so `run: echo "$APP_ENV"` works as expected.
 
 ## Includes

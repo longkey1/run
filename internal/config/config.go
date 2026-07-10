@@ -30,6 +30,7 @@ type Command struct {
 	Includes    []string           `yaml:"includes"`
 	Env         map[string]string  `yaml:"env"`
 	Args        []Arg              `yaml:"args"`
+	Flags       []Flag             `yaml:"flags"`
 	Commands    map[string]Command `yaml:"commands"`
 }
 
@@ -41,6 +42,22 @@ type Arg struct {
 	Description string  `yaml:"description"`
 	Default     *string `yaml:"default"`
 }
+
+// Flag declares a named long-form option (--name) for a command's run
+// string. Type selects between a value option ("" or "string") and a
+// boolean flag ("bool"). Default is a pointer to distinguish an absent
+// default from an explicit empty-string default; it is only valid for
+// value options.
+type Flag struct {
+	Name        string  `yaml:"name"`
+	Description string  `yaml:"description"`
+	Type        string  `yaml:"type"`
+	Default     *string `yaml:"default"`
+}
+
+// IsBool reports whether the flag is a boolean flag rather than a
+// value option.
+func (f Flag) IsBool() bool { return f.Type == "bool" }
 
 // Load reads and parses a command definition file, recursively merging
 // external command files referenced via includes.
@@ -195,6 +212,9 @@ func validateCommands(cmds map[string]Command, prefix string) error {
 		if err := validateArgs(c, full); err != nil {
 			return err
 		}
+		if err := validateFlags(c, full); err != nil {
+			return err
+		}
 		if err := validateCommands(c.Commands, full); err != nil {
 			return err
 		}
@@ -245,6 +265,54 @@ func validateArgs(c Command, full string) error {
 			sawDefault = true
 		} else if sawDefault {
 			return fmt.Errorf("command %q: required argument %q may not follow an argument with a default", full, arg.Name)
+		}
+	}
+	return nil
+}
+
+// validateFlags checks a command's flags declaration. Flags are
+// matched on the CLI as "--name" and exported as environment
+// variables, so names must be parseable as both. A flag may not share
+// a name with a declared argument: both become environment variables,
+// so the value would be ambiguous. Bool flags may not declare a
+// default: without a --no-name form a true default could never be
+// turned off, so unset always means false.
+func validateFlags(c Command, full string) error {
+	if len(c.Flags) == 0 {
+		return nil
+	}
+	if c.Run == "" {
+		return fmt.Errorf("command %q declares flags but has no run", full)
+	}
+	argNames := make(map[string]bool, len(c.Args))
+	for _, arg := range c.Args {
+		argNames[arg.Name] = true
+	}
+	seen := make(map[string]bool, len(c.Flags))
+	for _, f := range c.Flags {
+		if f.Name == "" {
+			return fmt.Errorf("command %q has a flag without a name", full)
+		}
+		if strings.Contains(f.Name, "=") {
+			return fmt.Errorf("command %q: flag name %q must not contain '='", full, f.Name)
+		}
+		if strings.HasPrefix(f.Name, "-") {
+			return fmt.Errorf("command %q: flag name %q must not start with '-'", full, f.Name)
+		}
+		if seen[f.Name] {
+			return fmt.Errorf("command %q has duplicate flag %q", full, f.Name)
+		}
+		seen[f.Name] = true
+		if argNames[f.Name] {
+			return fmt.Errorf("command %q: flag %q collides with an argument of the same name", full, f.Name)
+		}
+		switch f.Type {
+		case "", "string", "bool":
+		default:
+			return fmt.Errorf("command %q: flag %q has invalid type %q (supported: string, bool)", full, f.Name, f.Type)
+		}
+		if f.IsBool() && f.Default != nil {
+			return fmt.Errorf("command %q: bool flag %q may not have a default", full, f.Name)
 		}
 	}
 	return nil
