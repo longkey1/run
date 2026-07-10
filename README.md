@@ -304,6 +304,7 @@ All of run's own features live under the single reserved name `self`, so every o
 
 ```sh
 run self list              # list commands (same as plain `run`)
+run self list --json       # print the full command tree as JSON
 run self version           # show version information
 run self completion zsh    # generate shell completion (bash|zsh|fish|powershell)
 run self path [target]     # print a run directory path (root|local|global)
@@ -314,6 +315,17 @@ run <command> --help       # show a command's declared help
 `self` is the only reserved name: a top-level command named `self` is a configuration error. Nested commands may still use the name freely (`run deploy self` works).
 
 Flags must come before the command name; everything after the first non-flag argument is treated as part of the command path.
+
+### JSON listing
+
+`run self list --json` prints the merged command tree as a JSON array, one entry per command (group commands included, with `run` omitted), sorted by path — for scripting, `jq` queries, and tooling that needs to introspect the whole CLI in one call:
+
+```sh
+run self list --json | jq -r '.[] | select(.run) | .name'          # runnable command paths
+run self list --json | jq 'group_by(.run) | map(select(length>1))' # duplicated run strings
+```
+
+Each entry carries the declaration plus the *effective* execution context, resolved exactly like execution resolves it: `name` (space-joined path), `description`, `run`, `shell` (with the `sh` default materialized), `workdir`, `source` (the origin command file — local, global, or `$RUN_CONFIG`; include files are not attributed), `inherit_env` / `pass_env` (see [Environment isolation](#environment-isolation)), the merged `env`, and `arguments` / `options` with `required` and `type` made explicit. Dynamic values appear unevaluated as `{"run": "..."}` — like `--help`, the JSON listing never executes anything.
 
 ### Paths
 

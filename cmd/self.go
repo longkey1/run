@@ -19,11 +19,16 @@ var selfCmd = &cobra.Command{
 	Short: "run's own built-in commands",
 }
 
+var selfListJSON bool
+
 var selfListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available commands",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if selfListJSON {
+			return runListJSON(cmd)
+		}
 		return runList(cmd)
 	},
 }
@@ -115,6 +120,7 @@ func selfPath(target string) (string, error) {
 }
 
 func init() {
+	selfListCmd.Flags().BoolVar(&selfListJSON, "json", false, "print the full command tree as JSON")
 	selfCmd.AddCommand(selfListCmd, selfVersionCmd, selfCompletionCmd, selfPathCmd)
 	rootCmd.AddCommand(selfCmd)
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -95,6 +96,49 @@ func execMerged(t *testing.T, args []string) (string, error) {
 	cmd.SetErr(io.Discard)
 	err := runCommand(cmd, args)
 	return out.String(), err
+}
+
+// The JSON listing attributes each top-level name to its origin file:
+// a shadowed name reports the local file and its workDir, global-only
+// names report the global file and the cwd.
+func TestMergeSelfListJSONSources(t *testing.T) {
+	projectDir, cwd := setupMerge(t, mergeLocalCommands, mergeGlobalCommands)
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	if err := runListJSON(cmd); err != nil {
+		t.Fatalf("runListJSON() error = %v", err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &entries); err != nil {
+		t.Fatalf("Unmarshal(%q) error = %v", out.String(), err)
+	}
+
+	byName := make(map[string]map[string]any, len(entries))
+	for _, e := range entries {
+		byName[e["name"].(string)] = e
+	}
+	build, gorigin := byName["build"], byName["gorigin"]
+	if build == nil || gorigin == nil {
+		t.Fatalf("entries missing build/gorigin: %v", out.String())
+	}
+	if build["description"] != "local build" {
+		t.Errorf("build description = %v, want the shadowing local one", build["description"])
+	}
+	if got := canon(t, build["source"].(string)); got != filepath.Join(projectDir, ".run.yaml") {
+		t.Errorf("build source = %q, want the local file", got)
+	}
+	if got := canon(t, build["workdir"].(string)); got != projectDir {
+		t.Errorf("build workdir = %q, want %q", got, projectDir)
+	}
+	if got := canon(t, gorigin["source"].(string)); !strings.HasSuffix(got, filepath.Join(".config", "run", "run.yaml")) {
+		t.Errorf("gorigin source = %q, want the global file", got)
+	}
+	if got := canon(t, gorigin["workdir"].(string)); got != cwd {
+		t.Errorf("gorigin workdir = %q, want %q", got, cwd)
+	}
 }
 
 func TestMergeGlobalCommands(t *testing.T) {

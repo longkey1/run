@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -15,9 +17,15 @@ import (
 // falls through to user-defined commands.
 func execRoot(t *testing.T, args []string) (string, error) {
 	t.Helper()
+	return execRootWith(t, testCommands, args)
+}
+
+// execRootWith is execRoot with a custom command file content.
+func execRootWith(t *testing.T, content string, args []string) (string, error) {
+	t.Helper()
 
 	path := filepath.Join(t.TempDir(), ".run.yaml")
-	if err := os.WriteFile(path, []byte(testCommands), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RUN_CONFIG", path)
@@ -55,6 +63,113 @@ func TestSelfList(t *testing.T) {
 	}
 	if !strings.Contains(out, "optcmd <target> [--force] [--from <from>] [--label <label>]") {
 		t.Errorf("Execute() output = %q, want option signature", out)
+	}
+}
+
+// TestSelfListJSON checks the machine-readable command tree: one entry
+// per command (groups included) with the effective execution context,
+// dynamic values unevaluated.
+func TestSelfListJSON(t *testing.T) {
+	const content = `
+shell: bash
+env:
+  TOP: top
+x-note: extension keys are ignored
+commands:
+  group:
+    description: Group desc
+    inherit_env: false
+    pass_env: [AWS_*]
+    env:
+      SCOPE: group
+    commands:
+      sub:
+        shell: zsh
+        env:
+          SCOPE:
+            run: echo dyn
+        arguments:
+          - name: req
+            description: required arg
+          - name: target
+            default:
+              run: date +%F
+        options:
+          - name: force
+            type: bool
+          - name: from
+            default: "2026-01-01"
+        run: ./sub.sh
+  plain:
+    run: echo plain
+`
+	out, err := execRootWith(t, content, []string{"self", "list", "--json"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	var entries []map[string]any
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatalf("Unmarshal(%q) error = %v", out, err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e["name"].(string))
+	}
+	if want := []string{"group", "group sub", "plain"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("names = %v, want %v", names, want)
+	}
+	group, sub, plain := entries[0], entries[1], entries[2]
+
+	// The group entry has no run string and carries its own settings.
+	if _, ok := group["run"]; ok {
+		t.Errorf("group run = %v, want omitted", group["run"])
+	}
+	if group["description"] != "Group desc" || group["shell"] != "bash" || group["inherit_env"] != false {
+		t.Errorf("group = %v, want description/shell/inherit_env from declarations", group)
+	}
+	if want := map[string]any{"TOP": "top", "SCOPE": "group"}; !reflect.DeepEqual(group["env"], want) {
+		t.Errorf("group env = %v, want %v", group["env"], want)
+	}
+
+	// The subcommand entry shows the effective context: inner shell and
+	// env override, isolation settings inherit, dynamic values stay
+	// unevaluated as {"run": ...}.
+	if sub["run"] != "./sub.sh" || sub["shell"] != "zsh" || sub["inherit_env"] != false {
+		t.Errorf("sub = %v, want run/shell/inherit_env resolved", sub)
+	}
+	if want := []any{"AWS_*"}; !reflect.DeepEqual(sub["pass_env"], want) {
+		t.Errorf("sub pass_env = %v, want %v", sub["pass_env"], want)
+	}
+	wantEnv := map[string]any{"TOP": "top", "SCOPE": map[string]any{"run": "echo dyn"}}
+	if !reflect.DeepEqual(sub["env"], wantEnv) {
+		t.Errorf("sub env = %v, want %v", sub["env"], wantEnv)
+	}
+	wantArgs := []any{
+		map[string]any{"name": "req", "description": "required arg", "required": true},
+		map[string]any{"name": "target", "required": false, "default": map[string]any{"run": "date +%F"}},
+	}
+	if !reflect.DeepEqual(sub["arguments"], wantArgs) {
+		t.Errorf("sub arguments = %v, want %v", sub["arguments"], wantArgs)
+	}
+	wantOptions := []any{
+		map[string]any{"name": "force", "type": "bool"},
+		map[string]any{"name": "from", "type": "string", "default": "2026-01-01"},
+	}
+	if !reflect.DeepEqual(sub["options"], wantOptions) {
+		t.Errorf("sub options = %v, want %v", sub["options"], wantOptions)
+	}
+
+	// A command without isolation settings inherits everything; the "sh"
+	// default would materialize if no shell were declared.
+	if plain["inherit_env"] != true || plain["shell"] != "bash" {
+		t.Errorf("plain = %v, want inherit_env true, shell bash", plain)
+	}
+	if _, ok := plain["pass_env"]; ok {
+		t.Errorf("plain pass_env = %v, want omitted", plain["pass_env"])
+	}
+	if !strings.HasSuffix(plain["source"].(string), ".run.yaml") {
+		t.Errorf("plain source = %v, want the command file path", plain["source"])
 	}
 }
 

@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -50,6 +51,17 @@ type Value struct {
 // IsDynamic reports whether the value is computed by a shell command
 // rather than taken literally.
 func (v Value) IsDynamic() bool { return v.Run != "" }
+
+// MarshalJSON mirrors the YAML source forms: a literal value is a
+// plain string, a dynamic value is {"run": ...} — never evaluated.
+func (v Value) MarshalJSON() ([]byte, error) {
+	if v.IsDynamic() {
+		return json.Marshal(struct {
+			Run string `json:"run"`
+		}{v.Run})
+	}
+	return json.Marshal(v.Literal)
+}
 
 // UnmarshalYAML accepts a plain scalar (literal value) or a mapping
 // with a single non-empty "run" key (dynamic value).

@@ -182,6 +182,7 @@ func Execute() {
 type configFile struct {
 	cfg     *config.Config
 	workDir string
+	path    string
 }
 
 // loadConfigFiles loads every located command file in precedence
@@ -203,7 +204,7 @@ func loadConfigFiles() ([]configFile, error) {
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, configFile{cfg: cfg, workDir: f.WorkDir})
+		files = append(files, configFile{cfg: cfg, workDir: f.WorkDir, path: f.Path})
 	}
 	return files, nil
 }
