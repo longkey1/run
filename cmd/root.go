@@ -222,9 +222,11 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// Environment variables merge from outer to inner scopes, so
 	// deeper definitions override same-named keys. Values stay
 	// unevaluated until the command is known to execute, so overridden
-	// dynamic entries never run.
+	// dynamic entries never run. The shell inherits the same way: the
+	// innermost declaration wins, empty means "sh".
 	envVals := make(map[string]config.Value, len(cfg.Env))
 	maps.Copy(envVals, cfg.Env)
+	shell := cfg.Shell
 	n := 0
 	for n < len(path) {
 		c, ok := cmds[path[n]]
@@ -233,6 +235,9 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		}
 		command = c
 		maps.Copy(envVals, c.Env)
+		if c.Shell != "" {
+			shell = c.Shell
+		}
 		cmds = c.Commands
 		n++
 	}
@@ -259,7 +264,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return listCommands(cmd.OutOrStdout(), command.Commands, name)
 	}
 
-	env, err := resolveEnv(envVals, workDir, name, cmd.ErrOrStderr())
+	env, err := resolveEnv(envVals, shell, workDir, name, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -269,7 +274,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		if !v.IsDynamic() {
 			return v.Literal, nil
 		}
-		return runner.Capture(v.Run, workDir, envList(env), cmd.ErrOrStderr())
+		return runner.Capture(shell, v.Run, workDir, envList(env), cmd.ErrOrStderr())
 	}
 
 	positional, flagArgs, flagEnv, err := applyFlags(command, name, rest, resolve)
@@ -290,7 +295,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	cmdArgs = append(cmdArgs, flagArgs...)
 	maps.Copy(env, flagEnv)
 	maps.Copy(env, argEnv) // declared args and flags have the highest precedence
-	return runner.Run(command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return runner.Run(shell, command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 // applyArgs validates CLI arguments against the command's declared
@@ -403,12 +408,12 @@ func applyFlags(command config.Command, name string, args []string, resolve func
 }
 
 // resolveEnv converts the merged env declarations to concrete strings,
-// running dynamic values with sh in dir. A dynamic value sees the
-// process environment plus the literal entries only — dynamic entries
-// cannot reference one another, so no evaluation order is observable
-// through the values; they still run in name order to keep any side
-// effects deterministic.
-func resolveEnv(env map[string]config.Value, dir, name string, stderr io.Writer) (map[string]string, error) {
+// running dynamic values with the resolved shell in dir. A dynamic
+// value sees the process environment plus the literal entries only —
+// dynamic entries cannot reference one another, so no evaluation order
+// is observable through the values; they still run in name order to
+// keep any side effects deterministic.
+func resolveEnv(env map[string]config.Value, shell, dir, name string, stderr io.Writer) (map[string]string, error) {
 	resolved := make(map[string]string, len(env))
 	var dynamic []string
 	for k, v := range env {
@@ -424,7 +429,7 @@ func resolveEnv(env map[string]config.Value, dir, name string, stderr io.Writer)
 	slices.Sort(dynamic)
 	literals := envList(resolved)
 	for _, k := range dynamic {
-		out, err := runner.Capture(env[k].Run, dir, literals, stderr)
+		out, err := runner.Capture(shell, env[k].Run, dir, literals, stderr)
 		if err != nil {
 			return nil, fmt.Errorf("command %q: env %q: %w", name, k, err)
 		}

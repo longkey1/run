@@ -4,10 +4,24 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// fakeShell writes an executable stub shell that prints each of its
+// arguments on its own line, so tests can assert exactly how the
+// runner invokes the configured shell.
+func fakeShell(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fakeshell")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 func TestRun(t *testing.T) {
 	t.Parallel()
@@ -73,7 +87,7 @@ func TestRun(t *testing.T) {
 			t.Parallel()
 
 			var stdout bytes.Buffer
-			err := Run(tt.command, t.TempDir(), tt.args, tt.env, nil, &stdout, io.Discard)
+			err := Run("", tt.command, t.TempDir(), tt.args, tt.env, nil, &stdout, io.Discard)
 
 			if tt.wantCode == 0 {
 				if err != nil {
@@ -107,7 +121,7 @@ func TestRunWorkDir(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := Run("pwd -P", dir, nil, nil, nil, &stdout, io.Discard); err != nil {
+	if err := Run("", "pwd -P", dir, nil, nil, nil, &stdout, io.Discard); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != want {
@@ -115,11 +129,36 @@ func TestRunWorkDir(t *testing.T) {
 	}
 }
 
+func TestRunCustomShell(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	if err := Run(fakeShell(t), "echo hi", t.TempDir(), []string{"a"}, nil, nil, &stdout, io.Discard); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := "-c\necho hi\nrun\na\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("Run() stdout = %q, want %q", got, want)
+	}
+}
+
+func TestCaptureCustomShell(t *testing.T) {
+	t.Parallel()
+
+	out, err := Capture(fakeShell(t), "echo hi", t.TempDir(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("Capture() error = %v", err)
+	}
+	if want := "-c\necho hi"; out != want {
+		t.Errorf("Capture() = %q, want %q", out, want)
+	}
+}
+
 func TestRunStderr(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if err := Run("echo oops >&2", t.TempDir(), nil, nil, nil, &stdout, &stderr); err != nil {
+	if err := Run("", "echo oops >&2", t.TempDir(), nil, nil, nil, &stdout, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got := stderr.String(); got != "oops\n" {

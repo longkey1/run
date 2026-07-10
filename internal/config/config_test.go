@@ -29,12 +29,30 @@ func TestLoad(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		content string
-		want    map[string]Command
-		wantEnv map[string]Value
-		wantErr bool
+		name      string
+		content   string
+		want      map[string]Command
+		wantEnv   map[string]Value
+		wantShell string
+		wantErr   bool
 	}{
+		{
+			name: "top-level and command shell",
+			content: `
+shell: bash
+commands:
+  deploy:
+    shell: zsh
+    run: ./deploy.sh
+  build:
+    run: go build ./...
+`,
+			want: map[string]Command{
+				"deploy": {Shell: "zsh", Run: "./deploy.sh"},
+				"build":  {Run: "go build ./..."},
+			},
+			wantShell: "bash",
+		},
 		{
 			name: "valid",
 			content: `
@@ -368,6 +386,9 @@ commands:
 			if tt.wantEnv != nil && !reflect.DeepEqual(got.Env, tt.wantEnv) {
 				t.Errorf("Load() env = %+v, want %+v", got.Env, tt.wantEnv)
 			}
+			if got.Shell != tt.wantShell {
+				t.Errorf("Load() shell = %q, want %q", got.Shell, tt.wantShell)
+			}
 		})
 	}
 }
@@ -572,6 +593,57 @@ commands:
 					Env: map[string]Value{"A": {Literal: "own"}, "B": {Literal: "file"}},
 					Run: "echo inc",
 				},
+			},
+		},
+		{
+			name: "included shell applies to included commands only",
+			files: map[string]string{
+				".run.yaml": `
+includes:
+  - ./inc.yaml
+commands:
+  local:
+    run: echo local
+`,
+				"inc.yaml": `
+shell: bash
+commands:
+  inc:
+    run: echo inc
+  own:
+    shell: zsh
+    run: echo own
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Command{
+				"local": {Run: "echo local"},
+				"inc":   {Shell: "bash", Run: "echo inc"},
+				"own":   {Shell: "zsh", Run: "echo own"},
+			},
+		},
+		{
+			name: "inner include shell wins over outer include shell",
+			files: map[string]string{
+				".run.yaml": `
+includes:
+  - ./outer.yaml
+`,
+				"outer.yaml": `
+shell: bash
+includes:
+  - ./inner.yaml
+`,
+				"inner.yaml": `
+shell: zsh
+commands:
+  c:
+    run: echo c
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Command{
+				"c": {Shell: "zsh", Run: "echo c"},
 			},
 		},
 		{

@@ -211,7 +211,7 @@ run report 2020-01-01     # report for 2020-01-01 (the default's command does no
 
 - Evaluation happens only when a command is executed — never for `run self list`, `--help`, or shell completion — and only for the values that invocation actually uses: an overridden dynamic `env` entry and an unused default are never run.
 - Dynamic `env` values see the OS environment plus the literal `env` entries; they cannot reference other dynamic `env` values. Defaults are resolved after `env`, so they see all of it — define a shared value like `TODAY` once and reference it from any default.
-- Dynamic values run with `sh -c` in the same directory as the command itself (the directory containing the command file). A non-zero exit aborts the invocation with an error.
+- Dynamic values run with the same shell as the command itself (`sh -c` unless overridden via `shell:` — see [Shell](#shell)) in the same directory (the directory containing the command file). A non-zero exit aborts the invocation with an error.
 - Bool flags still may not declare a default, dynamic or otherwise.
 
 ## Includes
@@ -242,9 +242,10 @@ commands:
 
 Then `run lint` and `run deploy staging` work as if the commands were defined inline.
 
-- An included file uses the same schema as `.run.yaml` (`env`, `includes`, `commands`), and may itself include further files.
+- An included file uses the same schema as `.run.yaml` (`shell`, `env`, `includes`, `commands`), and may itself include further files.
 - A name collision — an included command with the same name as a local command or one from an earlier include in the same scope — is an error.
 - An included file's top-level `env:` applies to the commands it defines (and their subcommands), not to other commands in the including file. A command's own `env:` wins over its file's top-level `env:` on conflict.
+- An included file's top-level `shell:` works the same way: it applies to the commands the file defines, and a command's own `shell:` wins.
 - Relative paths resolve against the directory of the including file. Absolute paths are allowed; `~` is not expanded.
 - `includes` can be combined freely with `run` and inline `commands` in the same command.
 - Includes only split up definitions: commands still run in the root command file's directory, and `run self list` and shell completion cover included commands like inline ones.
@@ -281,7 +282,24 @@ Flags must come before the command name; everything after the first non-flag arg
 
 ## Execution
 
-`run:` strings are executed with `sh -c`, with arguments passed as positional parameters (`$0` is `run`). The exit code of the command is propagated as the exit code of `run`, so shell chaining like `run test && run build` works as expected.
+`run:` strings are executed with `sh -c` by default, with arguments passed as positional parameters (`$0` is `run`). The exit code of the command is propagated as the exit code of `run`, so shell chaining like `run test && run build` works as expected.
+
+### Shell
+
+`shell:` selects the shell that executes `run:` strings — at the top level for the whole file, or per command to override. Like `env:`, a command's `shell:` applies to its subcommands too, with the innermost declaration winning:
+
+```yaml
+shell: bash              # every command runs with `bash -c`
+commands:
+  pick:
+    run: 'a=(x y z); echo "${a[1]}"'   # bash arrays work
+  plain:
+    shell: sh            # this command (and its subcommands) uses sh
+    run: echo ok
+```
+
+- The value is a shell name or path (`bash`, `zsh`, `/opt/homebrew/bin/zsh`), invoked as `<shell> -c`; unset means `sh`. It is an executable, not a command line — extra options like `bash -x` are not supported.
+- Dynamic values (`{run: ...}`) are evaluated with the same resolved shell as the command they belong to.
 
 ## License
 

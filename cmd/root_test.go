@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -136,13 +137,20 @@ commands:
     run: printf '%s\n' "help=$help" "$@"
 `
 
-// execCommand runs runCommand against a temp command file and captures
-// stdout.
+// execCommand runs runCommand against a temp command file holding
+// testCommands and captures stdout.
 func execCommand(t *testing.T, args []string) (string, error) {
+	t.Helper()
+	return execCommandWith(t, testCommands, args)
+}
+
+// execCommandWith runs runCommand against a temp command file with the
+// given content and captures stdout.
+func execCommandWith(t *testing.T, content string, args []string) (string, error) {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), ".run.yaml")
-	if err := os.WriteFile(path, []byte(testCommands), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RUN_CONFIG", path)
@@ -555,6 +563,84 @@ func TestRunCommandDynamicDefaultLazy(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Errorf("default command did not run: %v", err)
+	}
+}
+
+// TestRunCommandShell verifies that run strings and dynamic values
+// execute with the configured shell: the top-level shell by default, a
+// command's own shell when declared, inherited through groups.
+func TestRunCommandShell(t *testing.T) {
+	// A stub shell that marks itself via FAKESHELL and delegates to sh,
+	// so run strings behave normally but reveal which shell ran them.
+	stub := func(mark string) string {
+		path := filepath.Join(t.TempDir(), mark)
+		script := "#!/bin/sh\nFAKESHELL=" + mark + " exec sh \"$@\"\n"
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	content := fmt.Sprintf(`
+shell: %s
+commands:
+  top:
+    run: echo "$FAKESHELL"
+  over:
+    shell: %s
+    run: echo "$FAKESHELL"
+  group:
+    shell: %s
+    commands:
+      inner:
+        run: echo "$FAKESHELL"
+  dyn:
+    env:
+      V:
+        run: printf "dyn-$FAKESHELL"
+    args:
+      - name: a
+        default:
+          run: printf "def-$FAKESHELL"
+    run: echo "$V $a"
+`, stub("one"), stub("two"), stub("three"))
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantOut string
+	}{
+		{
+			name:    "top-level shell runs the command",
+			args:    []string{"top"},
+			wantOut: "one\n",
+		},
+		{
+			name:    "command shell overrides top-level",
+			args:    []string{"over"},
+			wantOut: "two\n",
+		},
+		{
+			name:    "nested command inherits group shell",
+			args:    []string{"group", "inner"},
+			wantOut: "three\n",
+		},
+		{
+			name:    "dynamic env and defaults use the resolved shell",
+			args:    []string{"dyn"},
+			wantOut: "dyn-one def-one\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := execCommandWith(t, content, tt.args)
+			if err != nil {
+				t.Fatalf("runCommand() error = %v", err)
+			}
+			if out != tt.wantOut {
+				t.Errorf("runCommand() output = %q, want %q", out, tt.wantOut)
+			}
+		})
 	}
 }
 

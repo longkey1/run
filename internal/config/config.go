@@ -11,9 +11,11 @@ import (
 )
 
 // Config represents a command definition file. Env entries apply to
-// every command in the file. Includes name further command files whose
-// commands are merged into the top level.
+// every command in the file. Shell names the shell that executes run
+// strings and dynamic values (empty means "sh"). Includes name further
+// command files whose commands are merged into the top level.
 type Config struct {
+	Shell    string             `yaml:"shell"`
 	Env      map[string]Value   `yaml:"env"`
 	Includes []string           `yaml:"includes"`
 	Commands map[string]Command `yaml:"commands"`
@@ -64,10 +66,12 @@ func (v *Value) UnmarshalYAML(node *yaml.Node) error {
 // a run string, nested subcommands, or both. Includes name external
 // command files whose commands are merged into this command's
 // subcommands. Env entries apply to the command and its subcommands;
-// inner definitions override same-named keys from outer scopes.
+// inner definitions override same-named keys from outer scopes. Shell
+// overrides the shell for the command and its subcommands, like env.
 type Command struct {
 	Description string             `yaml:"description"`
 	Run         string             `yaml:"run"`
+	Shell       string             `yaml:"shell"`
 	Includes    []string           `yaml:"includes"`
 	Env         map[string]Value   `yaml:"env"`
 	Args        []Arg              `yaml:"args"`
@@ -205,6 +209,10 @@ func expandIncludes(cmds map[string]Command, includes []string, dir, prefix stri
 					c.Env = make(map[string]Value, len(sub.Env))
 				}
 				c.Env[k] = v
+			}
+			// Same for the included file's top-level shell.
+			if c.Shell == "" {
+				c.Shell = sub.Shell
 			}
 			cmds[name] = c
 		}
