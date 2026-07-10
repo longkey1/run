@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -324,71 +325,67 @@ func includeErr(prefix string, err error) error {
 	return fmt.Errorf("command %q: %w", prefix, err)
 }
 
-// Validate checks that the config is well-formed.
+// Validate checks that the config is well-formed. Every violation is
+// collected and returned joined (one per line via errors.Join) rather
+// than stopping at the first, so a single edit-validate cycle surfaces
+// the full list. Commands and env keys are checked in sorted order so
+// the report is deterministic.
 func (c *Config) Validate() error {
+	var errs []error
 	if len(c.Commands) == 0 {
-		return fmt.Errorf("no commands defined")
+		errs = append(errs, errors.New("no commands defined"))
 	}
 	// "self" is the only reserved name: it holds run's own built-in
 	// subcommands (list, version, completion). Nested commands may
 	// still use the name freely.
 	if _, ok := c.Commands["self"]; ok {
-		return fmt.Errorf("command name %q is reserved for run's built-in commands", "self")
+		errs = append(errs, fmt.Errorf("command name %q is reserved for run's built-in commands", "self"))
 	}
-	if err := validateEnv(c.Env, ""); err != nil {
-		return err
-	}
-	if err := validatePassEnv(c.PassEnv, ""); err != nil {
-		return err
-	}
-	return validateCommands(c.Commands, "")
+	errs = append(errs, validateEnv(c.Env, "")...)
+	errs = append(errs, validatePassEnv(c.PassEnv, "")...)
+	errs = append(errs, validateCommands(c.Commands, "")...)
+	return errors.Join(errs...)
 }
 
-func validateCommands(cmds map[string]Command, prefix string) error {
-	for name, c := range cmds {
+func validateCommands(cmds map[string]Command, prefix string) []error {
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(cmds)) {
+		c := cmds[name]
 		full := name
 		if prefix != "" {
 			full = prefix + " " + name
 		}
 		if c.Run == "" && len(c.Commands) == 0 {
-			return fmt.Errorf("command %q has no run or subcommands", full)
+			errs = append(errs, fmt.Errorf("command %q has no run or subcommands", full))
 		}
-		if err := validateEnv(c.Env, full); err != nil {
-			return err
-		}
-		if err := validatePassEnv(c.PassEnv, full); err != nil {
-			return err
-		}
-		if err := validateArguments(c, full); err != nil {
-			return err
-		}
-		if err := validateOptions(c, full); err != nil {
-			return err
-		}
-		if err := validateCommands(c.Commands, full); err != nil {
-			return err
-		}
+		errs = append(errs, validateEnv(c.Env, full)...)
+		errs = append(errs, validatePassEnv(c.PassEnv, full)...)
+		errs = append(errs, validateArguments(c, full)...)
+		errs = append(errs, validateOptions(c, full)...)
+		errs = append(errs, validateCommands(c.Commands, full)...)
 	}
-	return nil
+	return errs
 }
 
 // validateEnv checks environment variable names. Literal values may
 // be anything, including empty; the shape of dynamic values is
 // enforced at unmarshal time.
-func validateEnv(env map[string]Value, full string) error {
+func validateEnv(env map[string]Value, full string) []error {
 	scope := "top-level env"
 	if full != "" {
 		scope = fmt.Sprintf("command %q", full)
 	}
-	for name := range env {
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(env)) {
 		if name == "" {
-			return fmt.Errorf("%s has an environment variable without a name", scope)
+			errs = append(errs, fmt.Errorf("%s has an environment variable without a name", scope))
+			continue
 		}
 		if strings.Contains(name, "=") {
-			return fmt.Errorf("%s: environment variable name %q must not contain '='", scope, name)
+			errs = append(errs, fmt.Errorf("%s: environment variable name %q must not contain '='", scope, name))
 		}
 	}
-	return nil
+	return errs
 }
 
 // validatePassEnv checks pass_env patterns. Entries are matched
@@ -396,53 +393,58 @@ func validateEnv(env map[string]Value, full string) error {
 // metacharacters (*, ?, [...]) are allowed; malformed patterns are
 // rejected here so they can't silently match nothing at execution
 // time.
-func validatePassEnv(passEnv []string, full string) error {
+func validatePassEnv(passEnv []string, full string) []error {
 	scope := "top-level pass_env"
 	if full != "" {
 		scope = fmt.Sprintf("command %q", full)
 	}
+	var errs []error
 	for _, p := range passEnv {
 		if p == "" {
-			return fmt.Errorf("%s has an empty pass_env entry", scope)
+			errs = append(errs, fmt.Errorf("%s has an empty pass_env entry", scope))
+			continue
 		}
 		if strings.Contains(p, "=") {
-			return fmt.Errorf("%s: pass_env entry %q must not contain '='", scope, p)
+			errs = append(errs, fmt.Errorf("%s: pass_env entry %q must not contain '='", scope, p))
 		}
 		if _, err := path.Match(p, ""); err != nil {
-			return fmt.Errorf("%s: pass_env entry %q is not a valid pattern", scope, p)
+			errs = append(errs, fmt.Errorf("%s: pass_env entry %q is not a valid pattern", scope, p))
 		}
 	}
-	return nil
+	return errs
 }
 
 // validateArguments checks a command's arguments declaration.
 // Arguments map CLI arguments positionally, so an argument without a
 // default may not follow one with a default: it could never be filled
 // without also overriding the earlier default.
-func validateArguments(c Command, full string) error {
+func validateArguments(c Command, full string) []error {
 	if len(c.Arguments) == 0 {
 		return nil
 	}
+	var errs []error
 	if c.Run == "" {
-		return fmt.Errorf("command %q declares arguments but has no run", full)
+		errs = append(errs, fmt.Errorf("command %q declares arguments but has no run", full))
 	}
 	seen := make(map[string]bool, len(c.Arguments))
 	sawDefault := false
 	for _, arg := range c.Arguments {
-		if arg.Name == "" {
-			return fmt.Errorf("command %q has an argument without a name", full)
-		}
-		if seen[arg.Name] {
-			return fmt.Errorf("command %q has duplicate argument %q", full, arg.Name)
-		}
-		seen[arg.Name] = true
 		if arg.Default != nil {
 			sawDefault = true
-		} else if sawDefault {
-			return fmt.Errorf("command %q: required argument %q may not follow an argument with a default", full, arg.Name)
+		}
+		if arg.Name == "" {
+			errs = append(errs, fmt.Errorf("command %q has an argument without a name", full))
+			continue
+		}
+		if seen[arg.Name] {
+			errs = append(errs, fmt.Errorf("command %q has duplicate argument %q", full, arg.Name))
+		}
+		seen[arg.Name] = true
+		if arg.Default == nil && sawDefault {
+			errs = append(errs, fmt.Errorf("command %q: required argument %q may not follow an argument with a default", full, arg.Name))
 		}
 	}
-	return nil
+	return errs
 }
 
 // validateOptions checks a command's options declaration. Options are
@@ -452,12 +454,13 @@ func validateArguments(c Command, full string) error {
 // variables, so the value would be ambiguous. Bool options may not
 // declare a default: without a --no-name form a true default could
 // never be turned off, so unset always means false.
-func validateOptions(c Command, full string) error {
+func validateOptions(c Command, full string) []error {
 	if len(c.Options) == 0 {
 		return nil
 	}
+	var errs []error
 	if c.Run == "" {
-		return fmt.Errorf("command %q declares options but has no run", full)
+		errs = append(errs, fmt.Errorf("command %q declares options but has no run", full))
 	}
 	argNames := make(map[string]bool, len(c.Arguments))
 	for _, arg := range c.Arguments {
@@ -466,29 +469,30 @@ func validateOptions(c Command, full string) error {
 	seen := make(map[string]bool, len(c.Options))
 	for _, o := range c.Options {
 		if o.Name == "" {
-			return fmt.Errorf("command %q has an option without a name", full)
+			errs = append(errs, fmt.Errorf("command %q has an option without a name", full))
+			continue
 		}
 		if strings.Contains(o.Name, "=") {
-			return fmt.Errorf("command %q: option name %q must not contain '='", full, o.Name)
+			errs = append(errs, fmt.Errorf("command %q: option name %q must not contain '='", full, o.Name))
 		}
 		if strings.HasPrefix(o.Name, "-") {
-			return fmt.Errorf("command %q: option name %q must not start with '-'", full, o.Name)
+			errs = append(errs, fmt.Errorf("command %q: option name %q must not start with '-'", full, o.Name))
 		}
 		if seen[o.Name] {
-			return fmt.Errorf("command %q has duplicate option %q", full, o.Name)
+			errs = append(errs, fmt.Errorf("command %q has duplicate option %q", full, o.Name))
 		}
 		seen[o.Name] = true
 		if argNames[o.Name] {
-			return fmt.Errorf("command %q: option %q collides with an argument of the same name", full, o.Name)
+			errs = append(errs, fmt.Errorf("command %q: option %q collides with an argument of the same name", full, o.Name))
 		}
 		switch o.Type {
 		case "", "string", "bool":
 		default:
-			return fmt.Errorf("command %q: option %q has invalid type %q (supported: string, bool)", full, o.Name, o.Type)
+			errs = append(errs, fmt.Errorf("command %q: option %q has invalid type %q (supported: string, bool)", full, o.Name, o.Type))
 		}
 		if o.IsBool() && o.Default != nil {
-			return fmt.Errorf("command %q: bool option %q may not have a default", full, o.Name)
+			errs = append(errs, fmt.Errorf("command %q: bool option %q may not have a default", full, o.Name))
 		}
 	}
-	return nil
+	return errs
 }

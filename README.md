@@ -305,6 +305,7 @@ All of run's own features live under the single reserved name `self`, so every o
 ```sh
 run self list              # list commands (same as plain `run`)
 run self list --json       # print the full command tree as JSON
+run self lint              # validate all command files without running anything
 run self version           # show version information
 run self completion zsh    # generate shell completion (bash|zsh|fish|powershell)
 run self path [target]     # print a run directory path (root|local|global)
@@ -326,6 +327,21 @@ run self list --json | jq 'group_by(.run) | map(select(length>1))' # duplicated 
 ```
 
 Each entry carries the declaration plus the *effective* execution context, resolved exactly like execution resolves it: `name` (space-joined path), `description`, `run`, `shell` (with the `sh` default materialized), `workdir`, `source` (the origin command file — local, global, or `$RUN_CONFIG`; include files are not attributed), `inherit_env` / `pass_env` (see [Environment isolation](#environment-isolation)), the merged `env`, and `arguments` / `options` with `required` and `type` made explicit. Dynamic values appear unevaluated as `{"run": "..."}` — like `--help`, the JSON listing never executes anything.
+
+### Lint
+
+`run self lint` loads and validates every command file that would be used from the current directory — `$RUN_CONFIG` alone, or the local file plus the merged global file — including all `includes:` files, without executing anything (dynamic values are not evaluated). Exit code 0 means every file is valid.
+
+Unlike execution, which stops at the first broken file, lint reports **every** error it finds: all unknown keys with line numbers, and all validation errors (missing `run`, duplicate names, invalid options, ...) across all files, in deterministic order. This makes it suitable for CI, pre-commit hooks, and as the machine-verification step after editing command files:
+
+```sh
+$ run self lint
+invalid command file .run.yaml: command "a" has no run or subcommands
+command "b": option "force" has invalid type "int" (supported: string, bool)
+1 of 1 command file(s) failed validation
+$ echo $?
+1
+```
 
 ### Paths
 

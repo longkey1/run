@@ -33,6 +33,49 @@ var selfListCmd = &cobra.Command{
 	},
 }
 
+var selfLintCmd = &cobra.Command{
+	Use:   "lint",
+	Short: "Validate all command files without running anything",
+	Long: `Load and validate every command file that would be used from the
+current directory ($RUN_CONFIG alone, or the local file plus the merged
+global file), including all included files, and report every error
+found. Nothing is executed; dynamic values are not evaluated.
+
+Exit code 0 means every file is valid.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runLint(cmd)
+	},
+}
+
+// runLint loads and validates every located command file, continuing
+// past a broken file so one pass reports them all (loadConfigFiles
+// stops at the first broken file instead, because execution cannot
+// proceed with it). The merged view needs no extra checks: top-level
+// shadowing is legal, so files only ever fail individually.
+func runLint(cmd *cobra.Command) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	found, err := config.Find(cwd)
+	if err != nil {
+		return err
+	}
+	bad := 0
+	for _, f := range found {
+		if _, err := config.Load(f.Path); err != nil {
+			bad++
+			fmt.Fprintln(cmd.ErrOrStderr(), err)
+		}
+	}
+	if bad > 0 {
+		return fmt.Errorf("%d of %d command file(s) failed validation", bad, len(found))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "ok: %d command file(s) valid\n", len(found))
+	return nil
+}
+
 var selfVersionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Show version information",
@@ -121,6 +164,6 @@ func selfPath(target string) (string, error) {
 
 func init() {
 	selfListCmd.Flags().BoolVar(&selfListJSON, "json", false, "print the full command tree as JSON")
-	selfCmd.AddCommand(selfListCmd, selfVersionCmd, selfCompletionCmd, selfPathCmd)
+	selfCmd.AddCommand(selfListCmd, selfLintCmd, selfVersionCmd, selfCompletionCmd, selfPathCmd)
 	rootCmd.AddCommand(selfCmd)
 }

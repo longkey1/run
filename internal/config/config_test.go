@@ -1041,6 +1041,46 @@ func TestLoadIncludeAbsolutePath(t *testing.T) {
 	}
 }
 
+// Validation collects every violation instead of stopping at the
+// first, so one load reports the full list.
+func TestLoadReportsAllValidationErrors(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".run.yaml")
+	writeFile(t, path, `
+env:
+  "A=B": x
+commands:
+  a:
+    description: no run
+  b:
+    run: echo
+    arguments:
+      - name: x
+      - name: x
+    options:
+      - name: x
+      - name: force
+        type: int
+`)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+	for _, want := range []string{
+		`environment variable name "A=B"`,
+		`command "a" has no run or subcommands`,
+		`command "b" has duplicate argument "x"`,
+		`option "x" collides with an argument`,
+		`option "force" has invalid type "int"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() error = %v, want it to contain %q", err, want)
+		}
+	}
+}
+
 func TestLoadUnknownTopLevelKeys(t *testing.T) {
 	t.Parallel()
 

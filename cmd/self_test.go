@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // execRoot executes the real root command with the given args against a
@@ -170,6 +172,107 @@ commands:
 	}
 	if !strings.HasSuffix(plain["source"].(string), ".run.yaml") {
 		t.Errorf("plain source = %v, want the command file path", plain["source"])
+	}
+}
+
+// execLint runs runLint against a temp command file, capturing stdout
+// and stderr separately (errors are reported on stderr).
+func execLint(t *testing.T, content string) (stdout, stderr string, err error) {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), ".run.yaml")
+	if werr := os.WriteFile(path, []byte(content), 0o644); werr != nil {
+		t.Fatal(werr)
+	}
+	t.Setenv("RUN_CONFIG", path)
+
+	cmd := &cobra.Command{}
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	err = runLint(cmd)
+	return out.String(), errOut.String(), err
+}
+
+func TestSelfLint(t *testing.T) {
+	t.Run("valid file", func(t *testing.T) {
+		out, _, err := execLint(t, "commands:\n  build:\n    run: go build\n")
+		if err != nil {
+			t.Fatalf("runLint() error = %v", err)
+		}
+		if want := "ok: 1 command file(s) valid\n"; out != want {
+			t.Errorf("runLint() output = %q, want %q", out, want)
+		}
+	})
+
+	t.Run("broken file reports all errors", func(t *testing.T) {
+		_, stderr, err := execLint(t, `
+commands:
+  a:
+    description: no run
+  b:
+    run: echo
+    options:
+      - name: force
+        type: int
+`)
+		if err == nil || !strings.Contains(err.Error(), "1 of 1 command file(s) failed") {
+			t.Fatalf("runLint() error = %v, want failure summary", err)
+		}
+		for _, want := range []string{
+			`command "a" has no run or subcommands`,
+			`option "force" has invalid type "int"`,
+		} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("runLint() stderr = %q, want it to contain %q", stderr, want)
+			}
+		}
+	})
+
+	t.Run("nothing is executed", func(t *testing.T) {
+		marker := filepath.Join(t.TempDir(), "ran")
+		_, _, err := execLint(t, `
+env:
+  X:
+    run: touch `+marker+`
+commands:
+  a:
+    arguments:
+      - name: v
+        default:
+          run: touch `+marker+`
+    run: echo
+`)
+		if err != nil {
+			t.Fatalf("runLint() error = %v", err)
+		}
+		if _, serr := os.Stat(marker); serr == nil {
+			t.Error("runLint() evaluated a dynamic value")
+		}
+	})
+}
+
+// Lint keeps going past a broken file, so a broken local and a broken
+// global file are both reported in one pass — unlike execution, which
+// stops at the first broken file.
+func TestSelfLintReportsAllFiles(t *testing.T) {
+	setupMerge(t,
+		"commands:\n  a:\n    description: broken local\n",
+		"commands:\n  b:\n    description: broken global\n",
+	)
+
+	cmd := &cobra.Command{}
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	err := runLint(cmd)
+	if err == nil || !strings.Contains(err.Error(), "2 of 2 command file(s) failed") {
+		t.Fatalf("runLint() error = %v, want both files to fail", err)
+	}
+	for _, want := range []string{`command "a" has no run`, `command "b" has no run`} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("runLint() stderr = %q, want it to contain %q", errOut.String(), want)
+		}
 	}
 }
 
