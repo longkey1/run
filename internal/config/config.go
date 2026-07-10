@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,15 +17,22 @@ import (
 
 // Config represents a command definition file. Env entries apply to
 // every command in the file. Shell names the shell that executes run
-// strings and dynamic values (empty means "sh"). Includes name further
-// command files whose commands are merged into the top level.
-// Extensions absorbs the remaining top-level keys, which KnownFields
-// would otherwise reject; loadFile then allows x-* extension keys
-// (never read — a place to define YAML anchors shared across commands
-// in the file, resolved by the parser) and rejects everything else.
+// strings and dynamic values (empty means "sh"). InheritEnv and
+// PassEnv control environment isolation for the file's commands: with
+// inherit_env: false a command receives only a fixed baseline of the
+// process environment plus the names matching a pass_env pattern
+// (InheritEnv is a pointer so an inner scope can override either way).
+// Includes name further command files whose commands are merged into
+// the top level. Extensions absorbs the remaining top-level keys,
+// which KnownFields would otherwise reject; loadFile then allows x-*
+// extension keys (never read — a place to define YAML anchors shared
+// across commands in the file, resolved by the parser) and rejects
+// everything else.
 type Config struct {
 	Shell      string               `yaml:"shell"`
 	Env        map[string]Value     `yaml:"env"`
+	InheritEnv *bool                `yaml:"inherit_env"`
+	PassEnv    []string             `yaml:"pass_env"`
 	Includes   []string             `yaml:"includes"`
 	Commands   map[string]Command   `yaml:"commands"`
 	Extensions map[string]yaml.Node `yaml:",inline"`
@@ -77,10 +85,15 @@ func (v *Value) UnmarshalYAML(node *yaml.Node) error {
 // subcommands. Env entries apply to the command and its subcommands;
 // inner definitions override same-named keys from outer scopes. Shell
 // overrides the shell for the command and its subcommands, like env.
+// InheritEnv overrides environment isolation for the command and its
+// subcommands (innermost declaration wins); PassEnv patterns
+// accumulate along the command path.
 type Command struct {
 	Description string             `yaml:"description"`
 	Run         string             `yaml:"run"`
 	Shell       string             `yaml:"shell"`
+	InheritEnv  *bool              `yaml:"inherit_env"`
+	PassEnv     []string           `yaml:"pass_env"`
 	Includes    []string           `yaml:"includes"`
 	Env         map[string]Value   `yaml:"env"`
 	Arguments   []Argument         `yaml:"arguments"`
@@ -276,6 +289,14 @@ func expandIncludes(cmds map[string]Command, includes []string, dir, prefix stri
 			if c.Shell == "" {
 				c.Shell = sub.Shell
 			}
+			// The included file's top-level isolation settings push down
+			// the same way: the command's own inherit_env wins, and its
+			// pass_env patterns are joined with the file's (patterns are
+			// order-insensitive, so a plain union suffices).
+			if c.InheritEnv == nil {
+				c.InheritEnv = sub.InheritEnv
+			}
+			c.PassEnv = append(c.PassEnv, sub.PassEnv...)
 			cmds[name] = c
 		}
 	}
@@ -305,6 +326,9 @@ func (c *Config) Validate() error {
 	if err := validateEnv(c.Env, ""); err != nil {
 		return err
 	}
+	if err := validatePassEnv(c.PassEnv, ""); err != nil {
+		return err
+	}
 	return validateCommands(c.Commands, "")
 }
 
@@ -318,6 +342,9 @@ func validateCommands(cmds map[string]Command, prefix string) error {
 			return fmt.Errorf("command %q has no run or subcommands", full)
 		}
 		if err := validateEnv(c.Env, full); err != nil {
+			return err
+		}
+		if err := validatePassEnv(c.PassEnv, full); err != nil {
 			return err
 		}
 		if err := validateArguments(c, full); err != nil {
@@ -347,6 +374,30 @@ func validateEnv(env map[string]Value, full string) error {
 		}
 		if strings.Contains(name, "=") {
 			return fmt.Errorf("%s: environment variable name %q must not contain '='", scope, name)
+		}
+	}
+	return nil
+}
+
+// validatePassEnv checks pass_env patterns. Entries are matched
+// against environment variable names with path.Match, so glob
+// metacharacters (*, ?, [...]) are allowed; malformed patterns are
+// rejected here so they can't silently match nothing at execution
+// time.
+func validatePassEnv(passEnv []string, full string) error {
+	scope := "top-level pass_env"
+	if full != "" {
+		scope = fmt.Sprintf("command %q", full)
+	}
+	for _, p := range passEnv {
+		if p == "" {
+			return fmt.Errorf("%s has an empty pass_env entry", scope)
+		}
+		if strings.Contains(p, "=") {
+			return fmt.Errorf("%s: pass_env entry %q must not contain '='", scope, p)
+		}
+		if _, err := path.Match(p, ""); err != nil {
+			return fmt.Errorf("%s: pass_env entry %q is not a valid pattern", scope, p)
 		}
 	}
 	return nil

@@ -13,6 +13,9 @@ import (
 func lit(s string) *Value { return &Value{Literal: s} }
 func dyn(s string) *Value { return &Value{Run: s} }
 
+// boolp builds a pointer for expected inherit_env values.
+func boolp(b bool) *bool { return &b }
+
 // writeFile creates a file with the given content, creating parent
 // directories as needed.
 func writeFile(t *testing.T, path, content string) {
@@ -465,6 +468,50 @@ commands:
 			content: "commands:\n  build:\n    run: go build\n    x-note: nope\n",
 			wantErr: true,
 		},
+		{
+			name: "inherit_env and pass_env",
+			content: `
+commands:
+  isolated:
+    inherit_env: false
+    pass_env: [FOO, BAR_*]
+    run: ./run.sh
+    commands:
+      open:
+        inherit_env: true
+        run: ./open.sh
+`,
+			want: map[string]Command{
+				"isolated": {
+					InheritEnv: boolp(false),
+					PassEnv:    []string{"FOO", "BAR_*"},
+					Run:        "./run.sh",
+					Commands: map[string]Command{
+						"open": {InheritEnv: boolp(true), Run: "./open.sh"},
+					},
+				},
+			},
+		},
+		{
+			name:    "empty pass_env entry",
+			content: "commands:\n  a:\n    pass_env: [\"\"]\n    run: echo\n",
+			wantErr: true,
+		},
+		{
+			name:    "pass_env entry containing equals",
+			content: "commands:\n  a:\n    pass_env: [\"A=B\"]\n    run: echo\n",
+			wantErr: true,
+		},
+		{
+			name:    "malformed pass_env pattern",
+			content: "commands:\n  a:\n    pass_env: [\"[\"]\n    run: echo\n",
+			wantErr: true,
+		},
+		{
+			name:    "malformed top-level pass_env pattern",
+			content: "pass_env: [\"[\"]\ncommands:\n  a:\n    run: echo\n",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -774,6 +821,43 @@ commands:
 				"c": {
 					Env: map[string]Value{"A": {Literal: "inner"}, "B": {Literal: "outer"}},
 					Run: "echo c",
+				},
+			},
+		},
+		{
+			name: "included isolation settings apply to included commands only",
+			files: map[string]string{
+				".run.yaml": `
+includes:
+  - ./inc.yaml
+commands:
+  local:
+    run: echo local
+`,
+				"inc.yaml": `
+inherit_env: false
+pass_env: [A_*]
+commands:
+  inc:
+    pass_env: [B]
+    run: echo inc
+  own:
+    inherit_env: true
+    run: echo own
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Command{
+				"local": {Run: "echo local"},
+				"inc": {
+					InheritEnv: boolp(false),
+					PassEnv:    []string{"B", "A_*"},
+					Run:        "echo inc",
+				},
+				"own": {
+					InheritEnv: boolp(true),
+					PassEnv:    []string{"A_*"},
+					Run:        "echo own",
 				},
 			},
 		},

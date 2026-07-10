@@ -655,3 +655,89 @@ func TestRunCommandEnvOverridesOS(t *testing.T) {
 		t.Errorf("runCommand() output = %q, want %q", out, want)
 	}
 }
+
+// Commands with inherit_env: false receive only the fixed baseline of
+// the process environment plus pass_env matches; declared env,
+// arguments, and options are unaffected. inherit_env and pass_env
+// resolve along the command path like env and shell.
+func TestRunCommandEnvIsolation(t *testing.T) {
+	const isolationCommands = `
+pass_env: [TOP_SECRET]
+commands:
+  isolated:
+    inherit_env: false
+    pass_env: [PASS_ME, GLOB_*]
+    env:
+      DECLARED: yes
+    run: echo "cut=$CUT_ME pass=$PASS_ME glob=$GLOB_ONE top=$TOP_SECRET declared=$DECLARED path=${PATH:+ok}"
+  isolateddyn:
+    inherit_env: false
+    pass_env: [PASS_ME]
+    env:
+      FROM_DYN:
+        run: echo "$CUT_ME|$PASS_ME"
+    run: echo "$FROM_DYN"
+  isolatedgroup:
+    inherit_env: false
+    pass_env: [PASS_ME]
+    commands:
+      sub:
+        pass_env: [GLOB_ONE]
+        run: echo "cut=$CUT_ME pass=$PASS_ME glob=$GLOB_ONE"
+      reopened:
+        inherit_env: true
+        run: echo "cut=$CUT_ME"
+  inheriting:
+    run: echo "cut=$CUT_ME"
+`
+	setenv := func(t *testing.T) {
+		t.Setenv("CUT_ME", "leaked")
+		t.Setenv("PASS_ME", "passed")
+		t.Setenv("GLOB_ONE", "globbed")
+		t.Setenv("TOP_SECRET", "top")
+	}
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantOut string
+	}{
+		{
+			name:    "isolation cuts undeclared vars, keeps baseline and pass_env",
+			args:    []string{"isolated"},
+			wantOut: "cut= pass=passed glob=globbed top=top declared=yes path=ok\n",
+		},
+		{
+			name:    "dynamic env values are isolated the same way",
+			args:    []string{"isolateddyn"},
+			wantOut: "|passed\n",
+		},
+		{
+			name:    "group isolation applies to subcommands, pass_env accumulates",
+			args:    []string{"isolatedgroup", "sub"},
+			wantOut: "cut= pass=passed glob=globbed\n",
+		},
+		{
+			name:    "inner inherit_env: true overrides group isolation",
+			args:    []string{"isolatedgroup", "reopened"},
+			wantOut: "cut=leaked\n",
+		},
+		{
+			name:    "commands without inherit_env: false inherit everything",
+			args:    []string{"inheriting"},
+			wantOut: "cut=leaked\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setenv(t)
+			out, err := execCommandWith(t, isolationCommands, tt.args)
+			if err != nil {
+				t.Fatalf("runCommand() error = %v", err)
+			}
+			if out != tt.wantOut {
+				t.Errorf("runCommand() output = %q, want %q", out, tt.wantOut)
+			}
+		})
+	}
+}

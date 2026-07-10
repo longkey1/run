@@ -67,18 +67,25 @@ func TestRun(t *testing.T) {
 			wantStdout: "run\n",
 		},
 		{
-			name:       "extra env is visible",
+			name:       "env entries are visible",
 			command:    `echo "$env-$region"`,
 			env:        []string{"env=prod", "region=jp"},
 			wantStdout: "prod-jp\n",
 		},
 		{
-			// os/exec keeps the last entry for duplicate keys (Go 1.19+),
-			// so extra env appended after os.Environ() wins.
-			name:       "extra env overrides inherited environ",
-			command:    `echo "$HOME"`,
-			env:        []string{"HOME=/override"},
-			wantStdout: "/override\n",
+			// env is the complete child environment: names not in it are
+			// unset, even when set in the parent process.
+			name:       "env replaces the process environment",
+			command:    `echo "HOME=$HOME"`,
+			env:        []string{"other=x"},
+			wantStdout: "HOME=\n",
+		},
+		{
+			// os/exec keeps the last entry for duplicate keys (Go 1.19+).
+			name:       "later duplicate wins",
+			command:    `echo "$name"`,
+			env:        []string{"name=first", "name=second"},
+			wantStdout: "second\n",
 		},
 	}
 
@@ -106,6 +113,18 @@ func TestRun(t *testing.T) {
 				t.Errorf("Run() stdout = %q, want %q", got, tt.wantStdout)
 			}
 		})
+	}
+}
+
+func TestRunNilEnvInheritsProcessEnviron(t *testing.T) {
+	t.Setenv("RUNNER_TEST_INHERIT", "yes")
+
+	var stdout bytes.Buffer
+	if err := Run("", `echo "$RUNNER_TEST_INHERIT"`, t.TempDir(), nil, nil, nil, &stdout, io.Discard); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, want := stdout.String(), "yes\n"; got != want {
+		t.Errorf("Run() stdout = %q, want %q", got, want)
 	}
 }
 

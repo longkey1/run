@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 )
@@ -23,17 +22,15 @@ func (e *ExitError) Error() string {
 // Run executes a command string with `<shell> -c` in the given
 // directory; an empty shell means "sh". args become the shell's
 // positional parameters ($1, $2, ..., "$@") with $0 set to "run".
-// extraEnv entries ("name=value") are appended to the current
-// environment.
-func Run(shell, command, dir string, args, extraEnv []string, stdin io.Reader, stdout, stderr io.Writer) error {
+// env is the complete child environment ("name=value" entries, later
+// duplicates winning); nil means the current process environment.
+func Run(shell, command, dir string, args, env []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if shell == "" {
 		shell = "sh"
 	}
 	cmd := exec.Command(shell, append([]string{"-c", command, "run"}, args...)...)
 	cmd.Dir = dir
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
+	cmd.Env = env
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -50,20 +47,18 @@ func Run(shell, command, dir string, args, extraEnv []string, stdin io.Reader, s
 
 // Capture executes a command string with `<shell> -c` in the given
 // directory and returns its stdout with trailing newlines trimmed,
-// like $(...) command substitution; an empty shell means "sh".
-// extraEnv entries ("name=value") are appended to the current
-// environment and stderr passes through. A failure is a plain error,
-// not an ExitError: the captured command's exit code must not
-// masquerade as the run command's own.
-func Capture(shell, command, dir string, extraEnv []string, stderr io.Writer) (string, error) {
+// like $(...) command substitution; an empty shell means "sh". env is
+// the complete child environment; nil means the current process
+// environment. stderr passes through. A failure is a plain error, not
+// an ExitError: the captured command's exit code must not masquerade
+// as the run command's own.
+func Capture(shell, command, dir string, env []string, stderr io.Writer) (string, error) {
 	if shell == "" {
 		shell = "sh"
 	}
 	cmd := exec.Command(shell, "-c", command)
 	cmd.Dir = dir
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
+	cmd.Env = env
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = stderr

@@ -6,6 +6,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -279,6 +280,12 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	envVals := make(map[string]config.Value, len(origin.cfg.Env))
 	maps.Copy(envVals, origin.cfg.Env)
 	shell := origin.cfg.Shell
+	// Environment isolation resolves along the same walk: the innermost
+	// inherit_env declaration wins (nil means "not declared", so the
+	// default is to inherit everything), and pass_env patterns
+	// accumulate across scopes.
+	inheritEnv := origin.cfg.InheritEnv
+	passEnv := slices.Clone(origin.cfg.PassEnv)
 	n := 0
 	for n < len(path) {
 		c, ok := cmds[path[n]]
@@ -290,6 +297,10 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		if c.Shell != "" {
 			shell = c.Shell
 		}
+		if c.InheritEnv != nil {
+			inheritEnv = c.InheritEnv
+		}
+		passEnv = append(passEnv, c.PassEnv...)
 		cmds = c.Commands
 		n++
 	}
@@ -313,7 +324,16 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return listCommands(cmd.OutOrStdout(), command.Commands, name)
 	}
 
-	env, err := resolveEnv(envVals, shell, workDir, name, cmd.ErrOrStderr())
+	// base is what the command inherits from the process environment:
+	// everything (nil) by default, or the fixed baseline plus pass_env
+	// matches when inherit_env is false. The isolated form is non-nil
+	// even when empty, so it stays distinguishable from "inherit".
+	var base []string
+	if inheritEnv != nil && !*inheritEnv {
+		base = isolatedEnviron(passEnv)
+	}
+
+	env, err := resolveEnv(envVals, shell, workDir, name, base, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -323,7 +343,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		if !v.IsDynamic() {
 			return v.Literal, nil
 		}
-		return runner.Capture(shell, v.Run, workDir, envList(env), cmd.ErrOrStderr())
+		return runner.Capture(shell, v.Run, workDir, environWith(base, envList(env)), cmd.ErrOrStderr())
 	}
 
 	positional, optionArgs, optionEnv, err := applyOptions(command, name, rest, resolve)
@@ -344,7 +364,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	cmdArgs = append(cmdArgs, optionArgs...)
 	maps.Copy(env, optionEnv)
 	maps.Copy(env, argEnv) // declared arguments and options have the highest precedence
-	return runner.Run(shell, command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return runner.Run(shell, command.Run, workDir, cmdArgs, environWith(base, envList(env)), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 // applyArguments validates CLI arguments against the command's
@@ -459,11 +479,11 @@ func applyOptions(command config.Command, name string, args []string, resolve fu
 
 // resolveEnv converts the merged env declarations to concrete strings,
 // running dynamic values with the resolved shell in dir. A dynamic
-// value sees the process environment plus the literal entries only —
-// dynamic entries cannot reference one another, so no evaluation order
-// is observable through the values; they still run in name order to
-// keep any side effects deterministic.
-func resolveEnv(env map[string]config.Value, shell, dir, name string, stderr io.Writer) (map[string]string, error) {
+// value sees the inherited base environment plus the literal entries
+// only — dynamic entries cannot reference one another, so no
+// evaluation order is observable through the values; they still run
+// in name order to keep any side effects deterministic.
+func resolveEnv(env map[string]config.Value, shell, dir, name string, base []string, stderr io.Writer) (map[string]string, error) {
 	resolved := make(map[string]string, len(env))
 	var dynamic []string
 	for k, v := range env {
@@ -477,7 +497,7 @@ func resolveEnv(env map[string]config.Value, shell, dir, name string, stderr io.
 		return resolved, nil
 	}
 	slices.Sort(dynamic)
-	literals := envList(resolved)
+	literals := environWith(base, envList(resolved))
 	for _, k := range dynamic {
 		out, err := runner.Capture(shell, env[k].Run, dir, literals, stderr)
 		if err != nil {
@@ -486,6 +506,45 @@ func resolveEnv(env map[string]config.Value, shell, dir, name string, stderr io.
 		resolved[k] = out
 	}
 	return resolved, nil
+}
+
+// baselineEnv names the process environment variables a command keeps
+// receiving under inherit_env: false: the minimal set a shell command
+// needs to find tools, write temp files, localize, and render to the
+// terminal. The set is fixed — anything else must be declared via
+// pass_env.
+var baselineEnv = []string{"HOME", "LANG", "LC_*", "LOGNAME", "PATH", "SHELL", "TERM", "TMPDIR", "TZ", "USER"}
+
+// isolatedEnviron returns the process environment reduced to the
+// baseline variables plus the names matching a pass_env pattern
+// (path.Match syntax). The result is non-nil even when empty: nil
+// means "inherit everything" to environWith.
+func isolatedEnviron(passEnv []string) []string {
+	patterns := slices.Concat(baselineEnv, passEnv)
+	out := make([]string, 0, len(patterns))
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		for _, p := range patterns {
+			// Malformed patterns are rejected at load time, so the
+			// error can be ignored here.
+			if ok, _ := path.Match(p, name); ok {
+				out = append(out, kv)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// environWith builds a complete child environment: the inherited base
+// (nil means the full process environment) followed by extra
+// name=value entries, which override inherited names because os/exec
+// keeps the last duplicate.
+func environWith(base, extra []string) []string {
+	if base == nil {
+		base = os.Environ()
+	}
+	return slices.Concat(base, extra)
 }
 
 // envList converts an env map to sorted "name=value" pairs so the

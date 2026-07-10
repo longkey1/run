@@ -186,6 +186,27 @@ commands:
 - Top-level `env:` applies to every command in the file; a command's `env:` applies to the command and its subcommands.
 - Precedence (lowest to highest): inherited OS environment < top-level `env` < ancestor command `env` (outer to inner) < the resolved command's `env` < declared-argument and declared-option variables.
 - Values are literal strings — `run` performs no `$VAR`/`${VAR}` expansion in them. Variable references written in `run:` are still expanded by the shell at execution time, so `run: echo "$APP_ENV"` works as expected. To compute a value with a shell command, use the explicit `{run: ...}` form — see [Dynamic values](#dynamic-values).
+- The inherited OS environment can be reduced to an explicit allowlist per command — see [Environment isolation](#environment-isolation).
+
+## Environment isolation
+
+By default a command inherits the full OS environment. `inherit_env: false` cuts it down to a fixed baseline plus an explicit allowlist, so everything a command reads from the environment appears in its declaration:
+
+```yaml
+commands:
+  schedule:
+    inherit_env: false
+    pass_env: [SLACK_USER_ID, SLACK_API_TOKEN]
+    run: ./schedule.sh
+```
+
+`./schedule.sh` sees the two `SLACK_*` variables and the baseline, but nothing else from the OS environment — an undeclared variable is simply unset in the child, exactly as it would be on a machine where it was never exported.
+
+- The baseline always passes: `HOME`, `LANG`, `LC_*`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `TMPDIR`, `TZ`, `USER`. It is fixed — anything else must be listed in `pass_env`.
+- `pass_env` entries are glob patterns (`*`, `?`, `[...]`): `pass_env: [AWS_*, GIT_*]` passes whole families. A listed variable that isn't set in the OS environment is not an error; it just stays unset.
+- Both keys work at the top level of a file (applying to all its commands) and per command. Along the command path, the innermost `inherit_env` declaration wins — a subcommand can set `inherit_env: true` to opt back out of a group's isolation — and `pass_env` patterns accumulate. An included file's top-level settings apply to its own commands, like `env:` and `shell:`.
+- Declared `env:` values and declared-argument/option variables are unaffected: run sets them itself, on top of whatever is inherited.
+- Dynamic values (`{run: ...}`) execute under the same isolation as the command itself.
 
 ## Dynamic values
 
@@ -210,7 +231,7 @@ run report 2020-01-01     # report for 2020-01-01 (the default's command does no
 ```
 
 - Evaluation happens only when a command is executed — never for `run self list`, `--help`, or shell completion — and only for the values that invocation actually uses: an overridden dynamic `env` entry and an unused default are never run.
-- Dynamic `env` values see the OS environment plus the literal `env` entries; they cannot reference other dynamic `env` values. Defaults are resolved after `env`, so they see all of it — define a shared value like `TODAY` once and reference it from any default.
+- Dynamic `env` values see the inherited environment (reduced accordingly under [`inherit_env: false`](#environment-isolation)) plus the literal `env` entries; they cannot reference other dynamic `env` values. Defaults are resolved after `env`, so they see all of it — define a shared value like `TODAY` once and reference it from any default.
 - Dynamic values run with the same shell as the command itself (`sh -c` unless overridden via `shell:` — see [Shell](#shell)) in the same directory (the directory containing the command file). A non-zero exit aborts the invocation with an error.
 - Bool options still may not declare a default, dynamic or otherwise.
 
