@@ -269,16 +269,18 @@ Flags must come before the command name; everything after the first non-flag arg
 
 ## Command file resolution
 
-`run` looks for a command file in the following order:
+`run` looks for command files in the following order:
 
-1. `$RUN_CONFIG` — explicit path via environment variable
+1. `$RUN_CONFIG` — explicit path via environment variable; used **alone**, nothing else is merged
 2. `.run.yaml` (or `.run.yml`) in the current directory, then each ancestor directory up to the filesystem root
-3. `~/.config/run/run.yaml` (or `run.yml`) — global fallback
+3. `~/.config/run/run.yaml` (or `run.yml`) — global command file
+
+Without `$RUN_CONFIG`, the local and global files are **merged**: commands defined in the global file are always available, even inside a project with its own `.run.yaml`. On a top-level name collision the local definition wins and shadows the entire global command (subtree included) — like `PATH` lookup. Each file keeps its own top-level `env:` and `shell:`; they apply only to the commands that file defines and never leak into the other file's commands.
 
 ## Working directory
 
-- Local command file (`.run.yaml` found by ancestor search): commands run in **the directory containing the file**, like `make` and `just`. Relative paths in `run:` strings stay stable regardless of where you invoke `run`.
-- Global command file or `$RUN_CONFIG`: commands run in the current directory.
+- Commands from a local file (`.run.yaml` found by ancestor search) run in **the directory containing the file**, like `make` and `just`. Relative paths in `run:` strings stay stable regardless of where you invoke `run`.
+- Commands from the global file or `$RUN_CONFIG` run in the current directory — also when they are merged alongside a local file.
 
 ## Execution
 

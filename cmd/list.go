@@ -12,11 +12,11 @@ import (
 )
 
 func runList(cmd *cobra.Command) error {
-	cfg, _, err := loadConfig()
+	sources, err := loadSources()
 	if err != nil {
 		return err
 	}
-	return listCommands(cmd.OutOrStdout(), cfg.Commands, "")
+	return listCommands(cmd.OutOrStdout(), mergedCommands(sources), "")
 }
 
 // listCommands writes all runnable commands (those with a run string)

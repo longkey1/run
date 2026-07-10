@@ -40,8 +40,9 @@ use "run <command> -- --help" to pass a literal --help through instead.`,
 }
 
 // completeCommands returns shell completion candidates, loading the
-// command file at completion time so they always reflect the current
-// directory's .run.yaml. Already-typed arguments are resolved as a
+// command files at completion time so they always reflect the current
+// directory's .run.yaml plus the merged global file. Already-typed
+// arguments are resolved as a
 // path through nested commands, mirroring runCommand's greedy
 // resolution: while still on the path it completes the next level's
 // command names; past it, a word starting with "-" completes the
@@ -49,7 +50,7 @@ use "run <command> -- --help" to pass a literal --help through instead.`,
 // flag-value positions, and positional positions get no candidates,
 // and nothing ever falls back to file completion.
 func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	cfg, _, err := loadConfig()
+	sources, err := loadSources()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -57,7 +58,7 @@ func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]s
 	if slices.Contains(args, "--") {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	cmds := cfg.Commands
+	cmds := mergedCommands(sources)
 	var command config.Command
 	n := 0
 	for n < len(args) {
@@ -172,20 +173,53 @@ func Execute() {
 	}
 }
 
-func loadConfig() (*config.Config, string, error) {
+// source is one loaded command file and the directory its commands
+// run in. Sources are ordered by precedence (local before global);
+// a command's origin file supplies its top-level env, shell, and
+// working directory.
+type source struct {
+	cfg     *config.Config
+	workDir string
+}
+
+// loadSources loads every located command file in precedence order.
+// Any located file that fails to load or validate is a hard error —
+// a broken global file surfaces everywhere rather than being silently
+// ignored.
+func loadSources() ([]source, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	path, workDir, err := config.Find(cwd)
+	found, err := config.Find(cwd)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		return nil, "", err
+	sources := make([]source, 0, len(found))
+	for _, f := range found {
+		cfg, err := config.Load(f.Path)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, source{cfg: cfg, workDir: f.WorkDir})
 	}
-	return cfg, workDir, nil
+	return sources, nil
+}
+
+// mergedCommands overlays the sources' top-level commands, earlier
+// (higher-precedence) sources winning on name collisions: a local
+// command shadows a same-named global one. Each subtree still comes
+// entirely from one file, so walking the merged map resolves paths
+// correctly.
+func mergedCommands(sources []source) map[string]config.Command {
+	if len(sources) == 1 {
+		return sources[0].cfg.Commands
+	}
+	merged := make(map[string]config.Command)
+	for i := len(sources) - 1; i >= 0; i-- {
+		maps.Copy(merged, sources[i].cfg.Commands)
+	}
+	return merged
 }
 
 // runCommand resolves the argument path through nested commands and
@@ -199,7 +233,7 @@ func loadConfig() (*config.Config, string, error) {
 // --help among the pre-"--" remainder shows the command's declared
 // help instead.
 func runCommand(cmd *cobra.Command, args []string) error {
-	cfg, workDir, err := loadConfig()
+	sources, err := loadSources()
 	if err != nil {
 		return err
 	}
@@ -217,16 +251,33 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return runList(cmd)
 	}
 
-	cmds := cfg.Commands
+	// The first path segment picks the origin source (local shadows
+	// global); that file supplies the top-level env, shell, and the
+	// working directory for everything below it.
+	var origin source
+	found := false
+	for _, s := range sources {
+		if _, ok := s.cfg.Commands[path[0]]; ok {
+			origin = s
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("command %q not found", path[0])
+	}
+	workDir := origin.workDir
+
+	cmds := origin.cfg.Commands
 	var command config.Command
 	// Environment variables merge from outer to inner scopes, so
 	// deeper definitions override same-named keys. Values stay
 	// unevaluated until the command is known to execute, so overridden
 	// dynamic entries never run. The shell inherits the same way: the
 	// innermost declaration wins, empty means "sh".
-	envVals := make(map[string]config.Value, len(cfg.Env))
-	maps.Copy(envVals, cfg.Env)
-	shell := cfg.Shell
+	envVals := make(map[string]config.Value, len(origin.cfg.Env))
+	maps.Copy(envVals, origin.cfg.Env)
+	shell := origin.cfg.Shell
 	n := 0
 	for n < len(path) {
 		c, ok := cmds[path[n]]
@@ -240,9 +291,6 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		}
 		cmds = c.Commands
 		n++
-	}
-	if n == 0 {
-		return fmt.Errorf("command %q not found", path[0])
 	}
 	name := strings.Join(path[:n], " ")
 	rest := path[n:] // tokens after the resolved path, before any "--"
