@@ -268,7 +268,7 @@ Then `run lint` and `run deploy staging` work as if the commands were defined in
 - A name collision — an included command with the same name as a local command or one from an earlier include in the same scope — is an error.
 - An included file's top-level `env:` applies to the commands it defines (and their subcommands), not to other commands in the including file. A command's own `env:` wins over its file's top-level `env:` on conflict.
 - An included file's top-level `shell:` and `source:` work the same way: they apply to the commands the file defines; a command's own `shell:` wins, and its own `source:` entries are sourced after the file's.
-- Relative paths resolve against the directory of the including file. Absolute paths are allowed; `~` is not expanded.
+- Relative paths resolve against the directory of the including file. Absolute paths are allowed; `~` is not expanded. With the directory form (`.run/run.yaml`), split files placed in `.run/` are therefore referenced by bare name (`includes: [deploy.yaml]`).
 - `includes` can be combined freely with `run` and inline `commands` in the same command.
 - Includes only split up definitions: commands still run in the root command file's directory, and `run self list` and shell completion cover included commands like inline ones.
 - Circular includes are detected and reported as an error.
@@ -294,14 +294,16 @@ Flags must come before the command name; everything after the first non-flag arg
 `run` looks for command files in the following order:
 
 1. `$RUN_CONFIG` — explicit path via environment variable; used **alone**, nothing else is merged
-2. `.run.yaml` (or `.run.yml`) in the current directory, then each ancestor directory up to the filesystem root
+2. `.run.yaml` (or `.run.yml`) — or the directory form `.run/run.yaml` (or `.run/run.yml`) — in the current directory, then each ancestor directory up to the filesystem root
 3. `~/.config/run/run.yaml` (or `run.yml`) — global command file
+
+The file form and the directory form are interchangeable; having both in the same directory is an error. The directory form is convenient once commands are split across files: `includes:` and `source:` paths inside `.run/run.yaml` resolve against `.run/`, so the split files can live next to the entry file and be referenced without a `.run/` prefix.
 
 Without `$RUN_CONFIG`, the local and global files are **merged**: commands defined in the global file are always available, even inside a project with its own `.run.yaml`. On a top-level name collision the local definition wins and shadows the entire global command (subtree included) — like `PATH` lookup. Each file keeps its own top-level `env:` and `shell:`; they apply only to the commands that file defines and never leak into the other file's commands.
 
 ## Working directory
 
-- Commands from a local file (`.run.yaml` found by ancestor search) run in **the directory containing the file**, like `make` and `just`. Relative paths in `run:` strings stay stable regardless of where you invoke `run`.
+- Commands from a local file (`.run.yaml` found by ancestor search) run in **the directory containing the file**, like `make` and `just`. For the directory form this is the directory containing `.run/`, not `.run/` itself. Relative paths in `run:` strings stay stable regardless of where you invoke `run`.
 - Commands from the global file or `$RUN_CONFIG` run in the current directory — also when they are merged alongside a local file.
 
 ## Execution

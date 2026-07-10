@@ -60,6 +60,86 @@ func TestFind(t *testing.T) {
 		}
 	})
 
+	t.Run(".run/run.yaml is found with the parent as workDir", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("RUN_CONFIG", "")
+		t.Setenv("HOME", filepath.Join(root, "home"))
+
+		cmdFile := filepath.Join(root, "project", ".run", "run.yaml")
+		writeFile(t, cmdFile, "commands: {}\n")
+
+		cwd := filepath.Join(root, "project", "sub")
+		writeFile(t, filepath.Join(cwd, ".keep"), "")
+
+		sources, err := Find(cwd)
+		if err != nil {
+			t.Fatalf("Find() error = %v", err)
+		}
+		got := singleFile(t, sources)
+		if got.Path != cmdFile {
+			t.Errorf("Find() path = %q, want %q", got.Path, cmdFile)
+		}
+		if want := filepath.Join(root, "project"); got.WorkDir != want {
+			t.Errorf("Find() workDir = %q, want %q", got.WorkDir, want)
+		}
+	})
+
+	t.Run(".run/run.yml is accepted", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("RUN_CONFIG", "")
+		t.Setenv("HOME", filepath.Join(root, "home"))
+
+		cmdFile := filepath.Join(root, "project", ".run", "run.yml")
+		writeFile(t, cmdFile, "commands: {}\n")
+
+		sources, err := Find(filepath.Join(root, "project"))
+		if err != nil {
+			t.Fatalf("Find() error = %v", err)
+		}
+		if got := singleFile(t, sources); got.Path != cmdFile {
+			t.Errorf("Find() path = %q, want %q", got.Path, cmdFile)
+		}
+	})
+
+	t.Run("file and directory forms in the same directory are an error", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("RUN_CONFIG", "")
+		t.Setenv("HOME", filepath.Join(root, "home"))
+
+		project := filepath.Join(root, "project")
+		writeFile(t, filepath.Join(project, ".run.yaml"), "commands: {}\n")
+		writeFile(t, filepath.Join(project, ".run", "run.yaml"), "commands: {}\n")
+
+		_, err := Find(project)
+		if err == nil {
+			t.Fatal("Find() error = nil, want error")
+		}
+		if !strings.Contains(err.Error(), ".run.yaml") || !strings.Contains(err.Error(), filepath.Join(".run", "run.yaml")) {
+			t.Errorf("Find() error = %q, want mention of both forms", err)
+		}
+	})
+
+	t.Run(".run form in a closer directory stops the ancestor search", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("RUN_CONFIG", "")
+		t.Setenv("HOME", filepath.Join(root, "home"))
+
+		writeFile(t, filepath.Join(root, ".run.yaml"), "commands: {}\n")
+		cmdFile := filepath.Join(root, "project", ".run", "run.yaml")
+		writeFile(t, cmdFile, "commands: {}\n")
+
+		cwd := filepath.Join(root, "project", "sub")
+		writeFile(t, filepath.Join(cwd, ".keep"), "")
+
+		sources, err := Find(cwd)
+		if err != nil {
+			t.Fatalf("Find() error = %v", err)
+		}
+		if got := singleFile(t, sources); got.Path != cmdFile {
+			t.Errorf("Find() path = %q, want %q", got.Path, cmdFile)
+		}
+	})
+
 	t.Run("global fallback keeps cwd as workDir", func(t *testing.T) {
 		root := t.TempDir()
 		home := filepath.Join(root, "home")

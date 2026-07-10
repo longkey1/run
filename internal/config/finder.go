@@ -8,6 +8,15 @@ import (
 
 var localNames = []string{".run.yaml", ".run.yml"}
 
+// localDirNames is the directory form of the local command file: the
+// entry file inside a .run directory. Commands still run in the
+// directory containing .run, not in .run itself; includes and source
+// paths inside the file resolve against .run as usual.
+var localDirNames = []string{
+	filepath.Join(".run", "run.yaml"),
+	filepath.Join(".run", "run.yml"),
+}
+
 var globalNames = []string{"run.yaml", "run.yml"}
 
 // File is one located command file and the directory its commands
@@ -24,8 +33,10 @@ type File struct {
 // Search order:
 //  1. $RUN_CONFIG (commands run in the current directory); used alone,
 //     nothing else is merged
-//  2. .run.yaml / .run.yml in cwd or any ancestor directory
-//     (commands run in the directory containing the file)
+//  2. .run.yaml / .run.yml or .run/run.yaml / .run/run.yml in cwd or
+//     any ancestor directory (commands run in that directory — for the
+//     .run form, the directory containing .run). Both forms in the
+//     same directory is an error
 //  3. ~/.config/run/run.yaml / run.yml (commands run in the current
 //     directory)
 //
@@ -43,14 +54,21 @@ func Find(cwd string) ([]File, error) {
 	var files []File
 
 	dir := cwd
-loop:
 	for {
-		for _, name := range localNames {
-			candidate := filepath.Join(dir, name)
-			if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
-				files = append(files, File{Path: candidate, WorkDir: dir})
-				break loop
-			}
+		fileForm := firstExisting(dir, localNames)
+		dirForm := firstExisting(dir, localDirNames)
+		if fileForm != "" && dirForm != "" {
+			return nil, fmt.Errorf("both %s and %s exist; keep only one", fileForm, dirForm)
+		}
+		found := fileForm
+		if found == "" {
+			found = dirForm
+		}
+		if found != "" {
+			// WorkDir is dir even for the .run form: commands run in
+			// the project directory, not inside .run.
+			files = append(files, File{Path: found, WorkDir: dir})
+			break
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -69,16 +87,24 @@ loop:
 		return nil, err
 	}
 	globalDir := filepath.Join(home, ".config", "run")
-	for _, name := range globalNames {
-		candidate := filepath.Join(globalDir, name)
-		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
-			files = append(files, File{Path: candidate, WorkDir: cwd})
-			break
-		}
+	if candidate := firstExisting(globalDir, globalNames); candidate != "" {
+		files = append(files, File{Path: candidate, WorkDir: cwd})
 	}
 
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no command file found (.run.yaml or %s)", filepath.Join(globalDir, "run.yaml"))
+		return nil, fmt.Errorf("no command file found (.run.yaml, .run/run.yaml or %s)", filepath.Join(globalDir, "run.yaml"))
 	}
 	return files, nil
+}
+
+// firstExisting returns the first name under dir that exists as a
+// regular file, or "" when none does.
+func firstExisting(dir string, names []string) string {
+	for _, name := range names {
+		candidate := filepath.Join(dir, name)
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }

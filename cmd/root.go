@@ -18,8 +18,8 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "run [command [subcommand...]]",
 	Short: "A CLI runtime driven by YAML command definitions",
-	Long: `run is a CLI runtime: it turns commands defined in YAML files (.run.yaml)
-into a command-line interface and executes them.
+	Long: `run is a CLI runtime: it turns commands defined in YAML files (.run.yaml,
+or .run/run.yaml) into a command-line interface and executes them.
 
 Bare arguments are always command names, except the single reserved name
 "self", which groups run's own built-in features (run self list, run self
