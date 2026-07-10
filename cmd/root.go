@@ -35,6 +35,34 @@ exposed only through flags, so any task name can be used freely.`,
 		}
 		return runTask(cmd, args)
 	},
+	ValidArgsFunction: completeTasks,
+}
+
+// completeTasks returns task names for shell completion, loading the
+// task file at completion time so candidates always reflect the
+// current directory's .run.yaml. Already-typed arguments are resolved
+// as a path through nested tasks to complete the next level.
+func completeTasks(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cfg, _, err := loadConfig()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	tasks := cfg.Tasks
+	for _, name := range args {
+		t, ok := tasks[name]
+		if !ok {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		tasks = t.Tasks
+	}
+	var names []string
+	for name, t := range tasks {
+		if t.Description != "" {
+			name += "\t" + t.Description
+		}
+		names = append(names, name)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
 func init() {
