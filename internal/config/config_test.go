@@ -389,6 +389,82 @@ commands:
 			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: force\n        typ: bool\n",
 			wantErr: true,
 		},
+		{
+			name: "x-defs anchors shared across commands",
+			content: `
+x-defs:
+  target: &target
+    name: target
+    description: target date
+    default:
+      run: date +%F
+  force: &force
+    name: force
+    type: bool
+commands:
+  report:
+    arguments:
+      - *target
+    options:
+      - *force
+    run: ./report.sh
+  export:
+    arguments:
+      - *target
+    run: ./export.sh
+`,
+			want: map[string]Command{
+				"report": {
+					Arguments: []Argument{
+						{Name: "target", Description: "target date", Default: dyn("date +%F")},
+					},
+					Options: []Option{
+						{Name: "force", Type: "bool"},
+					},
+					Run: "./report.sh",
+				},
+				"export": {
+					Arguments: []Argument{
+						{Name: "target", Description: "target date", Default: dyn("date +%F")},
+					},
+					Run: "./export.sh",
+				},
+			},
+		},
+		{
+			name: "x-defs content is not validated",
+			content: `
+x-defs:
+  junk:
+    whatever: [1, 2]
+    run: ""
+commands:
+  build:
+    run: go build
+`,
+			want: map[string]Command{
+				"build": {Run: "go build"},
+			},
+		},
+		{
+			name: "multiple x-* extension keys",
+			content: `
+x-shared: value
+x-other:
+  - 1
+commands:
+  build:
+    run: go build
+`,
+			want: map[string]Command{
+				"build": {Run: "go build"},
+			},
+		},
+		{
+			name:    "x-* key on a command is an error",
+			content: "commands:\n  build:\n    run: go build\n    x-note: nope\n",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -878,6 +954,34 @@ func TestLoadIncludeAbsolutePath(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Commands, want) {
 		t.Errorf("Load() commands = %+v, want %+v", got.Commands, want)
+	}
+}
+
+func TestLoadUnknownTopLevelKeys(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".run.yaml")
+	writeFile(t, path, `x-ok: ignored
+comands:
+  a:
+    run: echo a
+enviroment: prod
+commands:
+  build:
+    run: go build
+`)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() error = nil, want error")
+	}
+	for _, want := range []string{`line 2: unknown key "comands"`, `line 5: unknown key "enviroment"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() error = %v, want it to contain %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "x-ok") {
+		t.Errorf("Load() error = %v, must not mention the allowed x-ok key", err)
 	}
 }
 

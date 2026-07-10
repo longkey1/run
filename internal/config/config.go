@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -17,11 +18,16 @@ import (
 // every command in the file. Shell names the shell that executes run
 // strings and dynamic values (empty means "sh"). Includes name further
 // command files whose commands are merged into the top level.
+// Extensions absorbs the remaining top-level keys, which KnownFields
+// would otherwise reject; loadFile then allows x-* extension keys
+// (never read — a place to define YAML anchors shared across commands
+// in the file, resolved by the parser) and rejects everything else.
 type Config struct {
-	Shell    string             `yaml:"shell"`
-	Env      map[string]Value   `yaml:"env"`
-	Includes []string           `yaml:"includes"`
-	Commands map[string]Command `yaml:"commands"`
+	Shell      string               `yaml:"shell"`
+	Env        map[string]Value     `yaml:"env"`
+	Includes   []string             `yaml:"includes"`
+	Commands   map[string]Command   `yaml:"commands"`
+	Extensions map[string]yaml.Node `yaml:",inline"`
 }
 
 // Value is a string setting that is either literal or dynamic. The
@@ -136,9 +142,10 @@ func Load(path string) (*Config, error) {
 
 // loadFile reads and parses a single command file without expansion.
 // Unknown keys are a parse error, so a misspelled key (e.g. argments:)
-// fails loudly instead of silently dropping the declaration. An empty
-// file decodes to an empty config; Validate rejects it later with a
-// clearer error than the decoder's io.EOF.
+// fails loudly instead of silently dropping the declaration — except
+// top-level x-* extension keys, which are ignored. An empty file
+// decodes to an empty config; Validate rejects it later with a clearer
+// error than the decoder's io.EOF.
 func loadFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -151,8 +158,54 @@ func loadFile(path string) (*Config, error) {
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
+	if err := checkExtensionKeys(cfg.Extensions, data); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
 
 	return &cfg, nil
+}
+
+// checkExtensionKeys rejects unknown top-level keys absorbed by the
+// inline Extensions map during strict decoding: only x-* keys are
+// allowed. The map holds value nodes, whose line differs from the
+// key's for block values, so the document is re-parsed (only on this
+// error path) to report the exact key lines.
+func checkExtensionKeys(ext map[string]yaml.Node, data []byte) error {
+	var bad []string
+	for key := range ext {
+		if !strings.HasPrefix(key, "x-") {
+			bad = append(bad, key)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+
+	lines := topLevelKeyLines(data)
+	slices.SortFunc(bad, func(a, b string) int { return cmp.Compare(lines[a], lines[b]) })
+	msgs := make([]string, len(bad))
+	for i, key := range bad {
+		msgs[i] = fmt.Sprintf("line %d: unknown key %q (top-level keys outside the schema must start with \"x-\")", lines[key], key)
+	}
+	return fmt.Errorf("yaml: unmarshal errors:\n  %s", strings.Join(msgs, "\n  "))
+}
+
+// topLevelKeyLines returns the line number of each top-level mapping
+// key in the document.
+func topLevelKeyLines(data []byte) map[string]int {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 {
+		return nil
+	}
+	m := doc.Content[0]
+	if m.Kind != yaml.MappingNode {
+		return nil
+	}
+	lines := make(map[string]int, len(m.Content)/2)
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		lines[m.Content[i].Value] = m.Content[i].Line
+	}
+	return lines
 }
 
 // expandIncludes recursively merges included command files into cmds.

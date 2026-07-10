@@ -251,6 +251,32 @@ Then `run lint` and `run deploy staging` work as if the commands were defined in
 - Includes only split up definitions: commands still run in the root command file's directory, and `run self list` and shell completion cover included commands like inline ones.
 - Circular includes are detected and reported as an error.
 
+## Reusing declarations with YAML anchors
+
+Repeated declarations can be shared within a file using plain YAML anchors. Top-level keys starting with `x-` are ignored by `run` and serve as a place to define them:
+
+```yaml
+x-defs:
+  target: &target
+    name: target
+    description: target date
+    default:
+      run: date +%F
+
+commands:
+  report:
+    arguments:
+      - *target
+    run: ./report.sh
+  export:
+    arguments:
+      - *target
+    run: ./export.sh
+```
+
+- Any top-level key starting with `x-` is allowed and never interpreted; its content is not validated. `x-` keys are only allowed at the top level, not inside commands.
+- Anchors are standard YAML: they resolve within a single file only. To share across `includes:` files, group the commands that share declarations into the same file.
+
 ## Built-in commands
 
 All of run's own features live under the single reserved name `self`, so every other bare argument is a user-defined command name:
@@ -300,7 +326,7 @@ The file form and the directory form are interchangeable; having both in the sam
 
 Without `$RUN_CONFIG`, the local and global files are **merged**: commands defined in the global file are always available, even inside a project with its own `.run.yaml`. On a top-level name collision the local definition wins and shadows the entire global command (subtree included) — like `PATH` lookup. Each file keeps its own top-level `env:` and `shell:`; they apply only to the commands that file defines and never leak into the other file's commands.
 
-Command files are parsed strictly: an unknown key anywhere (e.g. a misspelled `argments:`) is a load error, reported with its line number. All unknown-key errors in a file are listed at once.
+Command files are parsed strictly: an unknown key anywhere (e.g. a misspelled `argments:`) is a load error, reported with its line number. All unknown-key errors in a file are listed at once. The one exception is top-level keys starting with `x-`, which are ignored — see [Reusing declarations with YAML anchors](#reusing-declarations-with-yaml-anchors).
 
 ## Working directory
 
