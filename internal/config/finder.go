@@ -10,8 +10,8 @@ var localNames = []string{".run.yaml", ".run.yml"}
 
 // localDirNames is the directory form of the local command file: the
 // entry file inside a .run directory. Commands still run in the
-// directory containing .run, not in .run itself; includes and source
-// paths inside the file resolve against .run as usual.
+// directory containing .run, not in .run itself; includes paths
+// inside the file resolve against .run as usual.
 var localDirNames = []string{
 	filepath.Join(".run", "run.yaml"),
 	filepath.Join(".run", "run.yml"),
@@ -20,10 +20,23 @@ var localDirNames = []string{
 var globalNames = []string{"run.yaml", "run.yml"}
 
 // File is one located command file and the directory its commands
-// run in.
+// run in. Global marks the global file (~/.config/run); the local
+// file and a $RUN_CONFIG file are not global.
 type File struct {
 	Path    string
 	WorkDir string
+	Global  bool
+}
+
+// GlobalDir returns the global config directory (~/.config/run). The
+// directory is a fixed location derived from the home directory; it
+// is returned whether or not it (or a command file inside it) exists.
+func GlobalDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "run"), nil
 }
 
 // Find locates command definition files and returns them in precedence
@@ -77,7 +90,7 @@ func Find(cwd string) ([]File, error) {
 		dir = parent
 	}
 
-	home, err := os.UserHomeDir()
+	globalDir, err := GlobalDir()
 	if err != nil {
 		// Without a home directory there is no global file to merge;
 		// only fail if nothing else was found either.
@@ -86,9 +99,8 @@ func Find(cwd string) ([]File, error) {
 		}
 		return nil, err
 	}
-	globalDir := filepath.Join(home, ".config", "run")
 	if candidate := firstExisting(globalDir, globalNames); candidate != "" {
-		files = append(files, File{Path: candidate, WorkDir: cwd})
+		files = append(files, File{Path: candidate, WorkDir: cwd, Global: true})
 	}
 
 	if len(files) == 0 {

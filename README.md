@@ -214,28 +214,6 @@ run report 2020-01-01     # report for 2020-01-01 (the default's command does no
 - Dynamic values run with the same shell as the command itself (`sh -c` unless overridden via `shell:` — see [Shell](#shell)) in the same directory (the directory containing the command file). A non-zero exit aborts the invocation with an error.
 - Bool options still may not declare a default, dynamic or otherwise.
 
-## Source
-
-`source:` names shell files that are sourced before every `run:` string, so shared functions and variables can be defined once — at the top level for the whole file, or per command:
-
-```yaml
-source:
-  - ./lib/common.sh      # sourced for every command in this file
-commands:
-  deploy:
-    source:
-      - ./lib/deploy.sh  # additionally sourced for deploy and its subcommands
-    run: deploy_to "$1"
-```
-
-With `deploy_to()` defined in one of the sourced files, `run deploy prod` executes it like a regular command.
-
-- Entries accumulate from outer to inner scopes: top-level `source:` files are sourced first, then each ancestor command's, then the command's own — a later file can redefine functions from an earlier one. A file appearing more than once in the chain is sourced only once, at its first position.
-- Relative paths resolve against the directory of the declaring file (like `includes:`), so commands work regardless of the directory they run in. Absolute paths are allowed; `~` is not expanded.
-- Dynamic values (`{run: ...}`) see the same source files. Each evaluation is a separate shell process, so the files are sourced once per run string and per dynamic value — keep them to function and variable definitions, without side effects.
-- An included file's top-level `source:` applies to the commands it defines (before their own entries), like its top-level `env:` and `shell:`.
-- A missing source file aborts the invocation with an error; `--help`, `run self list`, and shell completion never source anything.
-
 ## Includes
 
 Commands can be split across files with `includes:`. The included file's commands are merged flat into the including scope — at the top level or inside a command:
@@ -264,10 +242,10 @@ commands:
 
 Then `run lint` and `run deploy staging` work as if the commands were defined inline.
 
-- An included file uses the same schema as `.run.yaml` (`shell`, `env`, `source`, `includes`, `commands`), and may itself include further files.
+- An included file uses the same schema as `.run.yaml` (`shell`, `env`, `includes`, `commands`), and may itself include further files.
 - A name collision — an included command with the same name as a local command or one from an earlier include in the same scope — is an error.
 - An included file's top-level `env:` applies to the commands it defines (and their subcommands), not to other commands in the including file. A command's own `env:` wins over its file's top-level `env:` on conflict.
-- An included file's top-level `shell:` and `source:` work the same way: they apply to the commands the file defines; a command's own `shell:` wins, and its own `source:` entries are sourced after the file's.
+- An included file's top-level `shell:` works the same way: it applies to the commands the file defines, and a command's own `shell:` wins.
 - Relative paths resolve against the directory of the including file. Absolute paths are allowed; `~` is not expanded. With the directory form (`.run/run.yaml`), split files placed in `.run/` are therefore referenced by bare name (`includes: [deploy.yaml]`).
 - `includes` can be combined freely with `run` and inline `commands` in the same command.
 - Includes only split up definitions: commands still run in the root command file's directory, and `run self list` and shell completion cover included commands like inline ones.
@@ -281,6 +259,7 @@ All of run's own features live under the single reserved name `self`, so every o
 run self list              # list commands (same as plain `run`)
 run self version           # show version information
 run self completion zsh    # generate shell completion (bash|zsh|fish|powershell)
+run self path [target]     # print a run directory path (root|local|global)
 run --help                 # show run's own help
 run <command> --help       # show a command's declared help
 ```
@@ -288,6 +267,26 @@ run <command> --help       # show a command's declared help
 `self` is the only reserved name: a top-level command named `self` is a configuration error. Nested commands may still use the name freely (`run deploy self` works).
 
 Flags must come before the command name; everything after the first non-flag argument is treated as part of the command path.
+
+### Paths
+
+`run self path <target>` prints one of run's directories, so `run:` strings and scripts can locate files relative to them — for example to source a shared shell library:
+
+```yaml
+commands:
+  deploy:
+    run: |
+      . "$(run self path local)/lib.sh"
+      deploy_to "$1"
+```
+
+- `root` (the default) — the directory the local file's commands run in: the one containing `.run.yaml` or `.run/`.
+- `local` — the directory containing the local command file itself: `.run/` for the directory form, the same as `root` otherwise. Shared `.sh` files kept next to the command file are addressed as `$(run self path local)/name.sh`.
+- `global` — the global config directory `~/.config/run`, for libraries shared across projects. It is a fixed location and is printed whether or not it exists.
+
+Keeping shared functions in plain `.sh` files and sourcing them explicitly keeps both sides complete, standalone shell: the library files work with `shellcheck` and `shfmt`, and can be sourced from outside `run` too.
+
+`root` and `local` resolve the local command file the same way command execution does and fail when no local file is found. With `$RUN_CONFIG` set, that file counts as local — `root` is then the current directory (where its commands run) — and `global` is an error, since the global file is not used.
 
 ## Command file resolution
 
@@ -297,7 +296,7 @@ Flags must come before the command name; everything after the first non-flag arg
 2. `.run.yaml` (or `.run.yml`) — or the directory form `.run/run.yaml` (or `.run/run.yml`) — in the current directory, then each ancestor directory up to the filesystem root
 3. `~/.config/run/run.yaml` (or `run.yml`) — global command file
 
-The file form and the directory form are interchangeable; having both in the same directory is an error. The directory form is convenient once commands are split across files: `includes:` and `source:` paths inside `.run/run.yaml` resolve against `.run/`, so the split files can live next to the entry file and be referenced without a `.run/` prefix.
+The file form and the directory form are interchangeable; having both in the same directory is an error. The directory form is convenient once commands are split across files: `includes:` paths inside `.run/run.yaml` resolve against `.run/`, so the split files can live next to the entry file and be referenced without a `.run/` prefix.
 
 Without `$RUN_CONFIG`, the local and global files are **merged**: commands defined in the global file are always available, even inside a project with its own `.run.yaml`. On a top-level name collision the local definition wins and shadows the entire global command (subtree included) — like `PATH` lookup. Each file keeps its own top-level `env:` and `shell:`; they apply only to the commands that file defines and never leak into the other file's commands.
 

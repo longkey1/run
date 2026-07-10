@@ -329,16 +329,6 @@ commands:
 			wantErr: true,
 		},
 		{
-			name:    "top-level source with empty entry",
-			content: "source:\n  - \"\"\ncommands:\n  build:\n    run: go build\n",
-			wantErr: true,
-		},
-		{
-			name:    "command source with empty entry",
-			content: "commands:\n  build:\n    run: go build\n    source:\n      - \"\"\n",
-			wantErr: true,
-		},
-		{
 			name:    "no commands",
 			content: "commands: {}\n",
 			wantErr: true,
@@ -838,86 +828,6 @@ includes:
 				t.Errorf("Load() commands = %+v, want %+v", got.Commands, tt.want)
 			}
 		})
-	}
-}
-
-// TestLoadScriptSource verifies that source paths resolve against the
-// declaring file's directory at load time (absolute entries pass
-// through), at the top level and on nested commands.
-func TestLoadScriptSource(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	entry := filepath.Join(dir, ".run.yaml")
-	writeFile(t, entry, `
-source:
-  - ./lib/common.sh
-  - /abs/tools.sh
-commands:
-  deploy:
-    source:
-      - ./lib/deploy.sh
-    run: deploy_to "$1"
-    commands:
-      staging:
-        source:
-          - ./lib/staging.sh
-        run: deploy_staging
-`)
-
-	got, err := Load(entry)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if want := []string{filepath.Join(dir, "lib", "common.sh"), "/abs/tools.sh"}; !reflect.DeepEqual(got.ScriptSource, want) {
-		t.Errorf("Load() top-level source = %v, want %v", got.ScriptSource, want)
-	}
-	deploy := got.Commands["deploy"]
-	if want := []string{filepath.Join(dir, "lib", "deploy.sh")}; !reflect.DeepEqual(deploy.ScriptSource, want) {
-		t.Errorf("Load() deploy source = %v, want %v", deploy.ScriptSource, want)
-	}
-	staging := deploy.Commands["staging"]
-	if want := []string{filepath.Join(dir, "lib", "staging.sh")}; !reflect.DeepEqual(staging.ScriptSource, want) {
-		t.Errorf("Load() deploy staging source = %v, want %v", staging.ScriptSource, want)
-	}
-}
-
-// TestLoadScriptSourceIncludePushdown verifies that an included file's
-// top-level source applies to the commands it defines — resolved
-// against the included file's directory, ahead of a command's own
-// entries — and never leaks to the including file's commands.
-func TestLoadScriptSourceIncludePushdown(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".run.yaml"), `
-includes:
-  - ./inc/inc.yaml
-commands:
-  local:
-    run: echo local
-`)
-	writeFile(t, filepath.Join(dir, "inc", "inc.yaml"), `
-source:
-  - ./lib.sh
-commands:
-  inc:
-    source:
-      - ./own.sh
-    run: echo inc
-`)
-
-	got, err := Load(filepath.Join(dir, ".run.yaml"))
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	inc := got.Commands["inc"]
-	want := []string{filepath.Join(dir, "inc", "lib.sh"), filepath.Join(dir, "inc", "own.sh")}
-	if !reflect.DeepEqual(inc.ScriptSource, want) {
-		t.Errorf("Load() inc source = %v, want %v", inc.ScriptSource, want)
-	}
-	if local := got.Commands["local"]; local.ScriptSource != nil {
-		t.Errorf("Load() local source = %v, want nil", local.ScriptSource)
 	}
 }
 

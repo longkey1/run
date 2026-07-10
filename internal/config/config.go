@@ -12,17 +12,13 @@ import (
 
 // Config represents a command definition file. Env entries apply to
 // every command in the file. Shell names the shell that executes run
-// strings and dynamic values (empty means "sh"). ScriptSource names
-// shell files sourced before every run string and dynamic value in
-// the file, so shared functions and variables are available. Includes
-// name further command files whose commands are merged into the top
-// level.
+// strings and dynamic values (empty means "sh"). Includes name further
+// command files whose commands are merged into the top level.
 type Config struct {
-	Shell        string             `yaml:"shell"`
-	Env          map[string]Value   `yaml:"env"`
-	ScriptSource []string           `yaml:"source"`
-	Includes     []string           `yaml:"includes"`
-	Commands     map[string]Command `yaml:"commands"`
+	Shell    string             `yaml:"shell"`
+	Env      map[string]Value   `yaml:"env"`
+	Includes []string           `yaml:"includes"`
+	Commands map[string]Command `yaml:"commands"`
 }
 
 // Value is a string setting that is either literal or dynamic. The
@@ -72,18 +68,15 @@ func (v *Value) UnmarshalYAML(node *yaml.Node) error {
 // subcommands. Env entries apply to the command and its subcommands;
 // inner definitions override same-named keys from outer scopes. Shell
 // overrides the shell for the command and its subcommands, like env.
-// ScriptSource entries accumulate: the command and its subcommands
-// source them after the entries inherited from outer scopes.
 type Command struct {
-	Description  string             `yaml:"description"`
-	Run          string             `yaml:"run"`
-	Shell        string             `yaml:"shell"`
-	Includes     []string           `yaml:"includes"`
-	Env          map[string]Value   `yaml:"env"`
-	ScriptSource []string           `yaml:"source"`
-	Arguments    []Argument         `yaml:"arguments"`
-	Options      []Option           `yaml:"options"`
-	Commands     map[string]Command `yaml:"commands"`
+	Description string             `yaml:"description"`
+	Run         string             `yaml:"run"`
+	Shell       string             `yaml:"shell"`
+	Includes    []string           `yaml:"includes"`
+	Env         map[string]Value   `yaml:"env"`
+	Arguments   []Argument         `yaml:"arguments"`
+	Options     []Option           `yaml:"options"`
+	Commands    map[string]Command `yaml:"commands"`
 }
 
 // Argument declares a named positional argument for a command's run
@@ -122,11 +115,6 @@ func Load(path string) (*Config, error) {
 	cfg, err := loadFile(abs)
 	if err != nil {
 		return nil, err
-	}
-
-	cfg.ScriptSource, err = absScriptSource(cfg.ScriptSource, filepath.Dir(abs), "")
-	if err != nil {
-		return nil, fmt.Errorf("invalid command file %s: %w", path, err)
 	}
 
 	cmds, err := expandIncludes(cfg.Commands, cfg.Includes, filepath.Dir(abs), "", []string{abs})
@@ -171,11 +159,6 @@ func expandIncludes(cmds map[string]Command, includes []string, dir, prefix stri
 		if prefix != "" {
 			full = prefix + " " + name
 		}
-		src, err := absScriptSource(c.ScriptSource, dir, full)
-		if err != nil {
-			return nil, err
-		}
-		c.ScriptSource = src
 		sub, err := expandIncludes(c.Commands, c.Includes, dir, full, chain)
 		if err != nil {
 			return nil, err
@@ -201,11 +184,6 @@ func expandIncludes(cmds map[string]Command, includes []string, dir, prefix stri
 		sub, err := loadFile(ref)
 		if err != nil {
 			return nil, includeErr(prefix, err)
-		}
-
-		subSource, err := absScriptSource(sub.ScriptSource, filepath.Dir(ref), "")
-		if err != nil {
-			return nil, includeErr(prefix, fmt.Errorf("include %s: %w", ref, err))
 		}
 
 		subCmds, err := expandIncludes(sub.Commands, sub.Includes, filepath.Dir(ref), prefix, append(chain, ref))
@@ -236,41 +214,10 @@ func expandIncludes(cmds map[string]Command, includes []string, dir, prefix stri
 			if c.Shell == "" {
 				c.Shell = sub.Shell
 			}
-			// The included file's top-level source applies to every
-			// command it defines, ahead of the command's own entries
-			// (source accumulates outer to inner instead of overriding).
-			if len(subSource) > 0 {
-				c.ScriptSource = append(slices.Clone(subSource), c.ScriptSource...)
-			}
 			cmds[name] = c
 		}
 	}
 	return cmds, nil
-}
-
-// absScriptSource resolves source paths against dir, the directory of
-// the file that declared them, so commands keep working regardless of
-// the working directory they later run in. An empty entry is an
-// error. scope names the declaring command for error messages (""
-// means the file's top level).
-func absScriptSource(paths []string, dir, scope string) ([]string, error) {
-	if len(paths) == 0 {
-		return nil, nil
-	}
-	out := make([]string, len(paths))
-	for i, p := range paths {
-		if p == "" {
-			if scope == "" {
-				return nil, fmt.Errorf("top-level source has an empty entry")
-			}
-			return nil, fmt.Errorf("command %q: source has an empty entry", scope)
-		}
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(dir, p)
-		}
-		out[i] = filepath.Clean(p)
-	}
-	return out, nil
 }
 
 // includeErr scopes an include-related error to the command path it
