@@ -12,9 +12,34 @@ import (
 )
 
 const testTasks = `
+env:
+  GREETING: hello
+  SCOPE: top
 tasks:
   echo:
     command: printf '%s\n' "$@"
+  showenv:
+    command: echo "$GREETING $SCOPE"
+  envtask:
+    env:
+      SCOPE: task
+      NAME: world
+    command: echo "$GREETING $SCOPE $NAME"
+  envgroup:
+    env:
+      SCOPE: group
+      GROUP: g
+    tasks:
+      inner:
+        env:
+          SCOPE: inner
+        command: echo "$GREETING $SCOPE $GROUP"
+  envarg:
+    env:
+      target: from-env
+    args:
+      - name: target
+    command: echo "$target"
   deploy:
     args:
       - name: env
@@ -121,6 +146,26 @@ func TestRunTask(t *testing.T) {
 			args:    []string{"db", "nope", "--", "x"},
 			wantErr: `task "db" has no subtask "nope"`,
 		},
+		{
+			name:    "top-level env applies to task",
+			args:    []string{"showenv"},
+			wantOut: "hello top\n",
+		},
+		{
+			name:    "task env overrides top-level",
+			args:    []string{"envtask"},
+			wantOut: "hello task world\n",
+		},
+		{
+			name:    "nested task inherits ancestor env and overrides",
+			args:    []string{"envgroup", "inner"},
+			wantOut: "hello inner g\n",
+		},
+		{
+			name:    "declared arg overrides task env",
+			args:    []string{"envarg", "cli"},
+			wantOut: "cli\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -139,5 +184,17 @@ func TestRunTask(t *testing.T) {
 				t.Errorf("runTask() output = %q, want %q", out, tt.wantOut)
 			}
 		})
+	}
+}
+
+func TestRunTaskEnvOverridesOS(t *testing.T) {
+	t.Setenv("SCOPE", "os")
+
+	out, err := execTask(t, []string{"showenv"})
+	if err != nil {
+		t.Fatalf("runTask() error = %v", err)
+	}
+	if want := "hello top\n"; out != want {
+		t.Errorf("runTask() output = %q, want %q", out, want)
 	}
 }

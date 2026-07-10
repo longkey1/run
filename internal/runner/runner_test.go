@@ -58,6 +58,14 @@ func TestRun(t *testing.T) {
 			env:        []string{"env=prod", "region=jp"},
 			wantStdout: "prod-jp\n",
 		},
+		{
+			// os/exec keeps the last entry for duplicate keys (Go 1.19+),
+			// so extra env appended after os.Environ() wins.
+			name:       "extra env overrides inherited environ",
+			command:    `echo "$HOME"`,
+			env:        []string{"HOME=/override"},
+			wantStdout: "/override\n",
+		},
 	}
 
 	for _, tt := range tests {

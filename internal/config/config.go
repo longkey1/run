@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,20 +11,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents a task definition file.
+// Config represents a task definition file. Env entries apply to
+// every task in the file.
 type Config struct {
-	Tasks map[string]Task `yaml:"tasks"`
+	Env   map[string]string `yaml:"env"`
+	Tasks map[string]Task   `yaml:"tasks"`
 }
 
 // Task represents a single task definition. A task may define a
 // command, nested subtasks, or both. Subtasks may alternatively be
-// loaded from an external task file referenced via file.
+// loaded from an external task file referenced via file. Env entries
+// apply to the task and its subtasks; inner definitions override
+// same-named keys from outer scopes.
 type Task struct {
-	Description string          `yaml:"description"`
-	Command     string          `yaml:"command"`
-	File        string          `yaml:"file"`
-	Args        []Arg           `yaml:"args"`
-	Tasks       map[string]Task `yaml:"tasks"`
+	Description string            `yaml:"description"`
+	Command     string            `yaml:"command"`
+	File        string            `yaml:"file"`
+	Env         map[string]string `yaml:"env"`
+	Args        []Arg             `yaml:"args"`
+	Tasks       map[string]Task   `yaml:"tasks"`
 }
 
 // Arg declares a named positional argument for a task's command.
@@ -119,6 +125,15 @@ func expandTasks(tasks map[string]Task, dir, prefix string, chain []string) erro
 			return err
 		}
 
+		// The external file's top-level env applies to all tasks it
+		// defines; being closer to those tasks, it wins over the
+		// referencing task's env on conflict.
+		if len(sub.Env) > 0 {
+			if task.Env == nil {
+				task.Env = make(map[string]string, len(sub.Env))
+			}
+			maps.Copy(task.Env, sub.Env)
+		}
 		task.Tasks = sub.Tasks
 		task.File = ""
 		tasks[name] = task
@@ -130,6 +145,9 @@ func expandTasks(tasks map[string]Task, dir, prefix string, chain []string) erro
 func (c *Config) Validate() error {
 	if len(c.Tasks) == 0 {
 		return fmt.Errorf("no tasks defined")
+	}
+	if err := validateEnv(c.Env, ""); err != nil {
+		return err
 	}
 	return validateTasks(c.Tasks, "")
 }
@@ -143,11 +161,32 @@ func validateTasks(tasks map[string]Task, prefix string) error {
 		if task.Command == "" && len(task.Tasks) == 0 {
 			return fmt.Errorf("task %q has no command or subtasks", full)
 		}
+		if err := validateEnv(task.Env, full); err != nil {
+			return err
+		}
 		if err := validateArgs(task, full); err != nil {
 			return err
 		}
 		if err := validateTasks(task.Tasks, full); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateEnv checks environment variable names. Values are literal
+// strings and may be anything, including empty.
+func validateEnv(env map[string]string, full string) error {
+	scope := "top-level env"
+	if full != "" {
+		scope = fmt.Sprintf("task %q", full)
+	}
+	for name := range env {
+		if name == "" {
+			return fmt.Errorf("%s has an environment variable without a name", scope)
+		}
+		if strings.Contains(name, "=") {
+			return fmt.Errorf("%s: environment variable name %q must not contain '='", scope, name)
 		}
 	}
 	return nil

@@ -29,6 +29,7 @@ func TestLoad(t *testing.T) {
 		name    string
 		content string
 		want    map[string]Task
+		wantEnv map[string]string
 		wantErr bool
 	}{
 		{
@@ -114,6 +115,53 @@ tasks:
 			},
 		},
 		{
+			name: "top-level and task env",
+			content: `
+env:
+  GREETING: hello
+  SCOPE: top
+tasks:
+  deploy:
+    env:
+      SCOPE: task
+    command: ./deploy.sh
+    tasks:
+      staging:
+        env:
+          SCOPE: staging
+          EMPTY: ""
+        command: ./deploy.sh staging
+`,
+			want: map[string]Task{
+				"deploy": {
+					Env:     map[string]string{"SCOPE": "task"},
+					Command: "./deploy.sh",
+					Tasks: map[string]Task{
+						"staging": {
+							Env:     map[string]string{"SCOPE": "staging", "EMPTY": ""},
+							Command: "./deploy.sh staging",
+						},
+					},
+				},
+			},
+			wantEnv: map[string]string{"GREETING": "hello", "SCOPE": "top"},
+		},
+		{
+			name:    "top-level env with empty key",
+			content: "env:\n  \"\": value\ntasks:\n  build:\n    command: go build\n",
+			wantErr: true,
+		},
+		{
+			name:    "task env with empty key",
+			content: "tasks:\n  build:\n    command: go build\n    env:\n      \"\": value\n",
+			wantErr: true,
+		},
+		{
+			name:    "env key containing equals",
+			content: "tasks:\n  build:\n    command: go build\n    env:\n      \"A=B\": value\n",
+			wantErr: true,
+		},
+		{
 			name:    "args without command",
 			content: "tasks:\n  deploy:\n    args:\n      - name: env\n    tasks:\n      staging:\n        command: ./deploy.sh staging\n",
 			wantErr: true,
@@ -171,6 +219,9 @@ tasks:
 			}
 			if !reflect.DeepEqual(got.Tasks, tt.want) {
 				t.Errorf("Load() tasks = %+v, want %+v", got.Tasks, tt.want)
+			}
+			if tt.wantEnv != nil && !reflect.DeepEqual(got.Env, tt.wantEnv) {
+				t.Errorf("Load() env = %+v, want %+v", got.Env, tt.wantEnv)
 			}
 		})
 	}
@@ -297,6 +348,36 @@ tasks:
 								"staging": {Command: "./deploy.sh staging"},
 							},
 						},
+					},
+				},
+			},
+		},
+		{
+			name: "external file top-level env merges into referencing task",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    env:
+      A: outer
+      B: outer
+    file: ./deploy.run.yaml
+`,
+				"deploy.run.yaml": `
+env:
+  B: file
+  C: file
+tasks:
+  staging:
+    command: ./deploy.sh staging
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Task{
+				"deploy": {
+					Env: map[string]string{"A": "outer", "B": "file", "C": "file"},
+					Tasks: map[string]Task{
+						"staging": {Command: "./deploy.sh staging"},
 					},
 				},
 			},

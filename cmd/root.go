@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -132,6 +133,10 @@ func runTask(cmd *cobra.Command, args []string) error {
 
 	tasks := cfg.Tasks
 	var task config.Task
+	// Environment variables merge from outer to inner scopes, so
+	// deeper definitions override same-named keys.
+	env := make(map[string]string, len(cfg.Env))
+	maps.Copy(env, cfg.Env)
 	n := 0
 	for n < len(path) {
 		t, ok := tasks[path[n]]
@@ -139,6 +144,7 @@ func runTask(cmd *cobra.Command, args []string) error {
 			break
 		}
 		task = t
+		maps.Copy(env, t.Env)
 		tasks = t.Tasks
 		n++
 	}
@@ -160,23 +166,24 @@ func runTask(cmd *cobra.Command, args []string) error {
 		return listTasks(cmd.OutOrStdout(), task.Tasks, name)
 	}
 
-	taskArgs, extraEnv, err := applyArgs(task, name, taskArgs)
+	taskArgs, argEnv, err := applyArgs(task, name, taskArgs)
 	if err != nil {
 		return err
 	}
-	return runner.Run(task.Command, workDir, taskArgs, extraEnv, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	maps.Copy(env, argEnv) // declared arguments have the highest precedence
+	return runner.Run(task.Command, workDir, taskArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 // applyArgs validates CLI arguments against the task's declared args,
 // fills in defaults for missing trailing arguments, and builds an
-// environment variable ("name=value") for each declared argument.
-// Arguments beyond the declaration are passed through untouched.
-func applyArgs(task config.Task, name string, args []string) ([]string, []string, error) {
+// environment variable for each declared argument. Arguments beyond
+// the declaration are passed through untouched.
+func applyArgs(task config.Task, name string, args []string) ([]string, map[string]string, error) {
 	if len(task.Args) == 0 {
 		return args, nil, nil
 	}
 	final := slices.Clone(args)
-	env := make([]string, 0, len(task.Args))
+	env := make(map[string]string, len(task.Args))
 	for i, decl := range task.Args {
 		var value string
 		switch {
@@ -188,9 +195,24 @@ func applyArgs(task config.Task, name string, args []string) ([]string, []string
 		default:
 			return nil, nil, fmt.Errorf("task %q: missing required argument %q", name, decl.Name)
 		}
-		env = append(env, decl.Name+"="+value)
+		env[decl.Name] = value
 	}
 	return final, env, nil
+}
+
+// envList converts an env map to sorted "name=value" pairs so the
+// constructed environment is deterministic. Keys are unique, so
+// sorting the joined pairs sorts by name.
+func envList(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	list := make([]string, 0, len(env))
+	for name, value := range env {
+		list = append(list, name+"="+value)
+	}
+	slices.Sort(list)
+	return list
 }
 
 func genCompletion(cmd *cobra.Command, shell string) error {

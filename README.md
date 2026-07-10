@@ -98,6 +98,34 @@ run deploy             # error: task "deploy": missing required argument "env"
 - Tasks without `args:` accept any number of arguments without validation.
 - `--list` shows the signature: `deploy <env> [region]` (`<...>` required, `[...]` has a default).
 
+## Environment variables
+
+Environment variables for commands can be declared with `env:`, at the top level of the task file and/or per task:
+
+```yaml
+env:
+  APP_ENV: development
+tasks:
+  build:
+    command: go build -o bin/app
+  deploy:
+    env:
+      APP_ENV: production
+    tasks:
+      staging:
+        env:
+          APP_ENV: staging
+        command: ./deploy.sh
+      production:
+        command: ./deploy.sh
+```
+
+`run build` sees `APP_ENV=development`, `run deploy production` sees `APP_ENV=production`, and `run deploy staging` sees `APP_ENV=staging`.
+
+- Top-level `env:` applies to every task in the file; a task's `env:` applies to the task and its subtasks.
+- Precedence (lowest to highest): inherited OS environment < top-level `env` < ancestor task `env` (outer to inner) < the resolved task's `env` < declared-argument variables.
+- Values are literal strings — `run` performs no `$VAR`/`${VAR}` expansion in them. Variable references written in `command:` are still expanded by the shell at execution time, so `command: echo "$APP_ENV"` works as expected.
+
 ## External task files
 
 A task's subtasks can be defined in a separate file with `file:`:
@@ -122,6 +150,7 @@ tasks:
 Then `run deploy staging` works as if the tasks were defined inline.
 
 - The external file uses the same schema as `.run.yaml` (a top-level `tasks:` map), and may itself reference further files.
+- An external file may define its own top-level `env:`; it is merged into the referencing task's `env` and applies to all tasks in the file (the file's values win over the referencing task's on conflict).
 - Relative paths resolve against the directory of the referencing file. Absolute paths are allowed; `~` is not expanded.
 - `file` can be combined with `command` (like `tasks` + `command`), but not with inline `tasks`.
 - External files only split up definitions: commands still run in the root task file's directory, and `--list` and shell completion include external tasks like inline ones.
