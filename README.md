@@ -214,6 +214,28 @@ run report 2020-01-01     # report for 2020-01-01 (the default's command does no
 - Dynamic values run with the same shell as the command itself (`sh -c` unless overridden via `shell:` — see [Shell](#shell)) in the same directory (the directory containing the command file). A non-zero exit aborts the invocation with an error.
 - Bool options still may not declare a default, dynamic or otherwise.
 
+## Source
+
+`source:` names shell files that are sourced before every `run:` string, so shared functions and variables can be defined once — at the top level for the whole file, or per command:
+
+```yaml
+source:
+  - ./lib/common.sh      # sourced for every command in this file
+commands:
+  deploy:
+    source:
+      - ./lib/deploy.sh  # additionally sourced for deploy and its subcommands
+    run: deploy_to "$1"
+```
+
+With `deploy_to()` defined in one of the sourced files, `run deploy prod` executes it like a regular command.
+
+- Entries accumulate from outer to inner scopes: top-level `source:` files are sourced first, then each ancestor command's, then the command's own — a later file can redefine functions from an earlier one. A file appearing more than once in the chain is sourced only once, at its first position.
+- Relative paths resolve against the directory of the declaring file (like `includes:`), so commands work regardless of the directory they run in. Absolute paths are allowed; `~` is not expanded.
+- Dynamic values (`{run: ...}`) see the same source files. Each evaluation is a separate shell process, so the files are sourced once per run string and per dynamic value — keep them to function and variable definitions, without side effects.
+- An included file's top-level `source:` applies to the commands it defines (before their own entries), like its top-level `env:` and `shell:`.
+- A missing source file aborts the invocation with an error; `--help`, `run self list`, and shell completion never source anything.
+
 ## Includes
 
 Commands can be split across files with `includes:`. The included file's commands are merged flat into the including scope — at the top level or inside a command:
@@ -242,10 +264,10 @@ commands:
 
 Then `run lint` and `run deploy staging` work as if the commands were defined inline.
 
-- An included file uses the same schema as `.run.yaml` (`shell`, `env`, `includes`, `commands`), and may itself include further files.
+- An included file uses the same schema as `.run.yaml` (`shell`, `env`, `source`, `includes`, `commands`), and may itself include further files.
 - A name collision — an included command with the same name as a local command or one from an earlier include in the same scope — is an error.
 - An included file's top-level `env:` applies to the commands it defines (and their subcommands), not to other commands in the including file. A command's own `env:` wins over its file's top-level `env:` on conflict.
-- An included file's top-level `shell:` works the same way: it applies to the commands the file defines, and a command's own `shell:` wins.
+- An included file's top-level `shell:` and `source:` work the same way: they apply to the commands the file defines; a command's own `shell:` wins, and its own `source:` entries are sourced after the file's.
 - Relative paths resolve against the directory of the including file. Absolute paths are allowed; `~` is not expanded.
 - `includes` can be combined freely with `run` and inline `commands` in the same command.
 - Includes only split up definitions: commands still run in the root command file's directory, and `run self list` and shell completion cover included commands like inline ones.

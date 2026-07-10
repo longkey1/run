@@ -50,7 +50,7 @@ use "run <command> -- --help" to pass a literal --help through instead.`,
 // option-value positions, and positional positions get no candidates,
 // and nothing ever falls back to file completion.
 func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	sources, err := loadSources()
+	files, err := loadConfigFiles()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -58,7 +58,7 @@ func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]s
 	if slices.Contains(args, "--") {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	cmds := mergedCommands(sources)
+	cmds := mergedCommands(files)
 	var command config.Command
 	n := 0
 	for n < len(args) {
@@ -174,20 +174,20 @@ func Execute() {
 	}
 }
 
-// source is one loaded command file and the directory its commands
-// run in. Sources are ordered by precedence (local before global);
-// a command's origin file supplies its top-level env, shell, and
-// working directory.
-type source struct {
+// configFile is one loaded command file and the directory its
+// commands run in. Files are ordered by precedence (local before
+// global); a command's origin file supplies its top-level env, shell,
+// source, and working directory.
+type configFile struct {
 	cfg     *config.Config
 	workDir string
 }
 
-// loadSources loads every located command file in precedence order.
-// Any located file that fails to load or validate is a hard error —
-// a broken global file surfaces everywhere rather than being silently
-// ignored.
-func loadSources() ([]source, error) {
+// loadConfigFiles loads every located command file in precedence
+// order. Any located file that fails to load or validate is a hard
+// error — a broken global file surfaces everywhere rather than being
+// silently ignored.
+func loadConfigFiles() ([]configFile, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -196,29 +196,29 @@ func loadSources() ([]source, error) {
 	if err != nil {
 		return nil, err
 	}
-	sources := make([]source, 0, len(found))
+	files := make([]configFile, 0, len(found))
 	for _, f := range found {
 		cfg, err := config.Load(f.Path)
 		if err != nil {
 			return nil, err
 		}
-		sources = append(sources, source{cfg: cfg, workDir: f.WorkDir})
+		files = append(files, configFile{cfg: cfg, workDir: f.WorkDir})
 	}
-	return sources, nil
+	return files, nil
 }
 
-// mergedCommands overlays the sources' top-level commands, earlier
-// (higher-precedence) sources winning on name collisions: a local
+// mergedCommands overlays the files' top-level commands, earlier
+// (higher-precedence) files winning on name collisions: a local
 // command shadows a same-named global one. Each subtree still comes
 // entirely from one file, so walking the merged map resolves paths
 // correctly.
-func mergedCommands(sources []source) map[string]config.Command {
-	if len(sources) == 1 {
-		return sources[0].cfg.Commands
+func mergedCommands(files []configFile) map[string]config.Command {
+	if len(files) == 1 {
+		return files[0].cfg.Commands
 	}
 	merged := make(map[string]config.Command)
-	for i := len(sources) - 1; i >= 0; i-- {
-		maps.Copy(merged, sources[i].cfg.Commands)
+	for i := len(files) - 1; i >= 0; i-- {
+		maps.Copy(merged, files[i].cfg.Commands)
 	}
 	return merged
 }
@@ -234,7 +234,7 @@ func mergedCommands(sources []source) map[string]config.Command {
 // --help among the pre-"--" remainder shows the command's declared
 // help instead.
 func runCommand(cmd *cobra.Command, args []string) error {
-	sources, err := loadSources()
+	files, err := loadConfigFiles()
 	if err != nil {
 		return err
 	}
@@ -252,14 +252,14 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return runList(cmd)
 	}
 
-	// The first path segment picks the origin source (local shadows
-	// global); that file supplies the top-level env, shell, and the
-	// working directory for everything below it.
-	var origin source
+	// The first path segment picks the origin file (local shadows
+	// global); that file supplies the top-level env, shell, source,
+	// and the working directory for everything below it.
+	var origin configFile
 	found := false
-	for _, s := range sources {
-		if _, ok := s.cfg.Commands[path[0]]; ok {
-			origin = s
+	for _, f := range files {
+		if _, ok := f.cfg.Commands[path[0]]; ok {
+			origin = f
 			found = true
 			break
 		}
@@ -279,6 +279,9 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	envVals := make(map[string]config.Value, len(origin.cfg.Env))
 	maps.Copy(envVals, origin.cfg.Env)
 	shell := origin.cfg.Shell
+	// Source accumulates instead of overriding: outer entries are
+	// sourced first, so inner files can build on (or redefine) them.
+	scriptSource := slices.Clone(origin.cfg.ScriptSource)
 	n := 0
 	for n < len(path) {
 		c, ok := cmds[path[n]]
@@ -290,6 +293,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		if c.Shell != "" {
 			shell = c.Shell
 		}
+		scriptSource = append(scriptSource, c.ScriptSource...)
 		cmds = c.Commands
 		n++
 	}
@@ -313,7 +317,19 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return listCommands(cmd.OutOrStdout(), command.Commands, name)
 	}
 
-	env, err := resolveEnv(envVals, shell, workDir, name, cmd.ErrOrStderr())
+	// A file inherited into a command that also declares it is sourced
+	// once, at its first (outermost) position.
+	scriptSource = dedupScriptSource(scriptSource)
+	// Missing source files are stat-checked up front: the shell's own
+	// error is shell-dependent and would omit the command context.
+	for _, f := range scriptSource {
+		if _, err := os.Stat(f); err != nil {
+			return fmt.Errorf("command %q: source file not found: %s", name, f)
+		}
+	}
+	prelude := sourcePrelude(scriptSource)
+
+	env, err := resolveEnv(envVals, prelude, shell, workDir, name, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -323,7 +339,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		if !v.IsDynamic() {
 			return v.Literal, nil
 		}
-		return runner.Capture(shell, v.Run, workDir, envList(env), cmd.ErrOrStderr())
+		return runner.Capture(shell, prelude+v.Run, workDir, envList(env), cmd.ErrOrStderr())
 	}
 
 	positional, optionArgs, optionEnv, err := applyOptions(command, name, rest, resolve)
@@ -344,7 +360,45 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	cmdArgs = append(cmdArgs, optionArgs...)
 	maps.Copy(env, optionEnv)
 	maps.Copy(env, argEnv) // declared arguments and options have the highest precedence
-	return runner.Run(shell, command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return runner.Run(shell, prelude+command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+}
+
+// dedupScriptSource drops repeated source files, keeping the first
+// (outermost) occurrence so each file is sourced once per shell
+// invocation. Paths were absolutized and cleaned at load time, so
+// string equality is enough.
+func dedupScriptSource(files []string) []string {
+	if len(files) < 2 {
+		return files
+	}
+	seen := make(map[string]bool, len(files))
+	out := files[:0]
+	for _, f := range files {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
+// sourcePrelude renders the source files as ". '<path>'" lines
+// prepended to every run string and dynamic value, making their
+// function and variable definitions visible. Each shell invocation is
+// a separate process, so the files are sourced per run string and per
+// dynamic value evaluation.
+func sourcePrelude(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, f := range files {
+		b.WriteString(". '")
+		b.WriteString(strings.ReplaceAll(f, "'", `'\''`))
+		b.WriteString("'\n")
+	}
+	return b.String()
 }
 
 // applyArguments validates CLI arguments against the command's
@@ -458,12 +512,12 @@ func applyOptions(command config.Command, name string, args []string, resolve fu
 }
 
 // resolveEnv converts the merged env declarations to concrete strings,
-// running dynamic values with the resolved shell in dir. A dynamic
-// value sees the process environment plus the literal entries only —
-// dynamic entries cannot reference one another, so no evaluation order
-// is observable through the values; they still run in name order to
-// keep any side effects deterministic.
-func resolveEnv(env map[string]config.Value, shell, dir, name string, stderr io.Writer) (map[string]string, error) {
+// running dynamic values with the resolved shell in dir, after the
+// prelude's source files. A dynamic value sees the process environment
+// plus the literal entries only — dynamic entries cannot reference one
+// another, so no evaluation order is observable through the values;
+// they still run in name order to keep any side effects deterministic.
+func resolveEnv(env map[string]config.Value, prelude, shell, dir, name string, stderr io.Writer) (map[string]string, error) {
 	resolved := make(map[string]string, len(env))
 	var dynamic []string
 	for k, v := range env {
@@ -479,7 +533,7 @@ func resolveEnv(env map[string]config.Value, shell, dir, name string, stderr io.
 	slices.Sort(dynamic)
 	literals := envList(resolved)
 	for _, k := range dynamic {
-		out, err := runner.Capture(shell, env[k].Run, dir, literals, stderr)
+		out, err := runner.Capture(shell, prelude+env[k].Run, dir, literals, stderr)
 		if err != nil {
 			return nil, fmt.Errorf("command %q: env %q: %w", name, k, err)
 		}

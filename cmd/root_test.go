@@ -148,8 +148,15 @@ func execCommand(t *testing.T, args []string) (string, error) {
 // given content and captures stdout.
 func execCommandWith(t *testing.T, content string, args []string) (string, error) {
 	t.Helper()
+	return execCommandIn(t, t.TempDir(), content, args)
+}
 
-	path := filepath.Join(t.TempDir(), ".run.yaml")
+// execCommandIn runs runCommand against a command file written into
+// dir, so tests can place other files (e.g. source files) next to it.
+func execCommandIn(t *testing.T, dir, content string, args []string) (string, error) {
+	t.Helper()
+
+	path := filepath.Join(dir, ".run.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -634,6 +641,134 @@ commands:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out, err := execCommandWith(t, content, tt.args)
+			if err != nil {
+				t.Fatalf("runCommand() error = %v", err)
+			}
+			if out != tt.wantOut {
+				t.Errorf("runCommand() output = %q, want %q", out, tt.wantOut)
+			}
+		})
+	}
+}
+
+// TestRunCommandScriptSource verifies source: files are sourced before
+// run strings and dynamic values — accumulated outer to inner, deduped
+// on repeats, and stat-checked with a clear error when missing. The
+// directory name carries a space to exercise the prelude's quoting.
+func TestRunCommandScriptSource(t *testing.T) {
+	dir := t.TempDir()
+	libDir := filepath.Join(dir, "my lib")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(libDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("common.sh", "COUNT=$((COUNT+1))\ngreet() { echo \"hi $1\"; }\n")
+	write("inner.sh", "greet() { echo \"yo $1\"; }\n")
+
+	content := `
+source:
+  - ./my lib/common.sh
+commands:
+  greet:
+    run: greet "$1"
+  layered:
+    source:
+      - ./my lib/inner.sh
+    run: greet "$1"
+  grp:
+    source:
+      - ./my lib/inner.sh
+    commands:
+      sub:
+        run: greet "$1"
+  dup:
+    source:
+      - ./my lib/common.sh
+    run: echo "$COUNT"
+  dyn:
+    env:
+      V:
+        run: greet env
+    run: echo "$V"
+  dyndef:
+    arguments:
+      - name: a
+        default:
+          run: greet def
+    run: echo "$a"
+  missing:
+    source:
+      - ./nope.sh
+    run: echo x
+`
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantOut string
+		wantErr string
+	}{
+		{
+			name:    "sourced function available in run",
+			args:    []string{"greet", "x"},
+			wantOut: "hi x\n",
+		},
+		{
+			name:    "inner source layers over outer",
+			args:    []string{"layered", "x"},
+			wantOut: "yo x\n",
+		},
+		{
+			name:    "nested command inherits group source",
+			args:    []string{"grp", "sub", "x"},
+			wantOut: "yo x\n",
+		},
+		{
+			name:    "repeated file sourced once",
+			args:    []string{"dup"},
+			wantOut: "1\n",
+		},
+		{
+			name:    "dynamic env sees sourced functions",
+			args:    []string{"dyn"},
+			wantOut: "hi env\n",
+		},
+		{
+			name:    "dynamic default sees sourced functions",
+			args:    []string{"dyndef"},
+			wantOut: "hi def\n",
+		},
+		{
+			name:    "missing source file",
+			args:    []string{"missing"},
+			wantErr: "source file not found",
+		},
+		{
+			name: "help renders despite missing source file",
+			args: []string{"missing", "--help"},
+			wantOut: `Usage:
+  run missing
+
+Options:
+  --help  show this help
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := execCommandIn(t, dir, content, tt.args)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("runCommand() error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("runCommand() error = %v", err)
 			}

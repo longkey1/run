@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// singleSource asserts that sources holds exactly one entry and
+// singleFile asserts that files holds exactly one entry and
 // returns it.
-func singleSource(t *testing.T, sources []Source) Source {
+func singleFile(t *testing.T, files []File) File {
 	t.Helper()
-	if len(sources) != 1 {
-		t.Fatalf("Find() returned %d sources, want 1: %v", len(sources), sources)
+	if len(files) != 1 {
+		t.Fatalf("Find() returned %d files, want 1: %v", len(files), files)
 	}
-	return sources[0]
+	return files[0]
 }
 
 // Find depends on process-wide state (environment variables), so these
@@ -34,7 +34,7 @@ func TestFind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find() error = %v", err)
 		}
-		got := singleSource(t, sources)
+		got := singleFile(t, sources)
 		if got.Path != cmdFile {
 			t.Errorf("Find() path = %q, want %q", got.Path, cmdFile)
 		}
@@ -55,7 +55,7 @@ func TestFind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find() error = %v", err)
 		}
-		if got := singleSource(t, sources); got.Path != cmdFile {
+		if got := singleFile(t, sources); got.Path != cmdFile {
 			t.Errorf("Find() path = %q, want %q", got.Path, cmdFile)
 		}
 	})
@@ -76,7 +76,7 @@ func TestFind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find() error = %v", err)
 		}
-		got := singleSource(t, sources)
+		got := singleFile(t, sources)
 		if got.Path != globalFile {
 			t.Errorf("Find() path = %q, want %q", got.Path, globalFile)
 		}
@@ -136,7 +136,7 @@ func TestFind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find() error = %v", err)
 		}
-		got := singleSource(t, sources)
+		got := singleFile(t, sources)
 		if got.Path != envFile {
 			t.Errorf("Find() path = %q, want %q", got.Path, envFile)
 		}
@@ -160,7 +160,7 @@ func TestFind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find() error = %v", err)
 		}
-		if got := singleSource(t, sources); got.Path != envFile {
+		if got := singleFile(t, sources); got.Path != envFile {
 			t.Errorf("Find() path = %q, want %q", got.Path, envFile)
 		}
 	})
