@@ -11,62 +11,63 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const testTasks = `
+const testCommands = `
 env:
   GREETING: hello
   SCOPE: top
-tasks:
+commands:
   echo:
-    command: printf '%s\n' "$@"
+    run: printf '%s\n' "$@"
   showenv:
-    command: echo "$GREETING $SCOPE"
-  envtask:
+    run: echo "$GREETING $SCOPE"
+  envcmd:
     env:
-      SCOPE: task
+      SCOPE: command
       NAME: world
-    command: echo "$GREETING $SCOPE $NAME"
+    run: echo "$GREETING $SCOPE $NAME"
   envgroup:
     env:
       SCOPE: group
       GROUP: g
-    tasks:
+    commands:
       inner:
         env:
           SCOPE: inner
-        command: echo "$GREETING $SCOPE $GROUP"
+        run: echo "$GREETING $SCOPE $GROUP"
   envarg:
     env:
       target: from-env
     args:
       - name: target
-    command: echo "$target"
+    run: echo "$target"
   deploy:
     args:
       - name: env
       - name: region
         default: us-east-1
-    command: echo "$env/$region $1/$2"
+    run: echo "$env/$region $1/$2"
   wrap:
     args:
       - name: first
-    command: printf '%s\n' "$@"
+    run: printf '%s\n' "$@"
   db:
-    command: echo "db status $1"
-    tasks:
+    run: echo "db status $1"
+    commands:
       migrate:
-        command: echo migrate
+        run: echo migrate
   group:
-    tasks:
+    commands:
       sub:
-        command: echo sub
+        run: echo sub
 `
 
-// execTask runs runTask against a temp task file and captures stdout.
-func execTask(t *testing.T, args []string) (string, error) {
+// execCommand runs runCommand against a temp command file and captures
+// stdout.
+func execCommand(t *testing.T, args []string) (string, error) {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), ".run.yaml")
-	if err := os.WriteFile(path, []byte(testTasks), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(testCommands), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RUN_CONFIG", path)
@@ -75,11 +76,11 @@ func execTask(t *testing.T, args []string) (string, error) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
-	err := runTask(cmd, args)
+	err := runCommand(cmd, args)
 	return out.String(), err
 }
 
-func TestRunTask(t *testing.T) {
+func TestRunCommand(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
@@ -92,7 +93,7 @@ func TestRunTask(t *testing.T) {
 			wantOut: "a\nb c\n",
 		},
 		{
-			name:    "subtask wins over argument",
+			name:    "subcommand wins over argument",
 			args:    []string{"db", "migrate"},
 			wantOut: "migrate\n",
 		},
@@ -127,42 +128,42 @@ func TestRunTask(t *testing.T) {
 			wantOut: "a\nb\n",
 		},
 		{
-			name:    "group rejects unknown subtask",
+			name:    "group rejects unknown subcommand",
 			args:    []string{"group", "x"},
-			wantErr: `task "group" has no subtask "x"`,
+			wantErr: `command "group" has no subcommand "x"`,
 		},
 		{
 			name:    "group rejects explicit arguments",
 			args:    []string{"group", "--", "x"},
-			wantErr: `task "group" has no command`,
+			wantErr: `command "group" has no run`,
 		},
 		{
-			name:    "unknown task",
+			name:    "unknown command",
 			args:    []string{"nope"},
-			wantErr: `task "nope" not found`,
+			wantErr: `command "nope" not found`,
 		},
 		{
 			name:    "-- before resolved path still errors",
 			args:    []string{"db", "nope", "--", "x"},
-			wantErr: `task "db" has no subtask "nope"`,
+			wantErr: `command "db" has no subcommand "nope"`,
 		},
 		{
-			name:    "top-level env applies to task",
+			name:    "top-level env applies to command",
 			args:    []string{"showenv"},
 			wantOut: "hello top\n",
 		},
 		{
-			name:    "task env overrides top-level",
-			args:    []string{"envtask"},
-			wantOut: "hello task world\n",
+			name:    "command env overrides top-level",
+			args:    []string{"envcmd"},
+			wantOut: "hello command world\n",
 		},
 		{
-			name:    "nested task inherits ancestor env and overrides",
+			name:    "nested command inherits ancestor env and overrides",
 			args:    []string{"envgroup", "inner"},
 			wantOut: "hello inner g\n",
 		},
 		{
-			name:    "declared arg overrides task env",
+			name:    "declared arg overrides command env",
 			args:    []string{"envarg", "cli"},
 			wantOut: "cli\n",
 		},
@@ -170,31 +171,31 @@ func TestRunTask(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, err := execTask(t, tt.args)
+			out, err := execCommand(t, tt.args)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("runTask() error = %v, want containing %q", err, tt.wantErr)
+					t.Fatalf("runCommand() error = %v, want containing %q", err, tt.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("runTask() error = %v", err)
+				t.Fatalf("runCommand() error = %v", err)
 			}
 			if out != tt.wantOut {
-				t.Errorf("runTask() output = %q, want %q", out, tt.wantOut)
+				t.Errorf("runCommand() output = %q, want %q", out, tt.wantOut)
 			}
 		})
 	}
 }
 
-func TestRunTaskEnvOverridesOS(t *testing.T) {
+func TestRunCommandEnvOverridesOS(t *testing.T) {
 	t.Setenv("SCOPE", "os")
 
-	out, err := execTask(t, []string{"showenv"})
+	out, err := execCommand(t, []string{"showenv"})
 	if err != nil {
-		t.Fatalf("runTask() error = %v", err)
+		t.Fatalf("runCommand() error = %v", err)
 	}
 	if want := "hello top\n"; out != want {
-		t.Errorf("runTask() output = %q, want %q", out, want)
+		t.Errorf("runCommand() output = %q, want %q", out, want)
 	}
 }

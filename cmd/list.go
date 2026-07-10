@@ -16,39 +16,39 @@ func runList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	return listTasks(cmd.OutOrStdout(), cfg.Tasks, "")
+	return listCommands(cmd.OutOrStdout(), cfg.Commands, "")
 }
 
-// listTasks writes all runnable tasks (those with a command) under the
-// given prefix, one per line with the full space-joined path.
-func listTasks(out io.Writer, tasks map[string]config.Task, prefix string) error {
+// listCommands writes all runnable commands (those with a run string)
+// under the given prefix, one per line with the full space-joined path.
+func listCommands(out io.Writer, cmds map[string]config.Command, prefix string) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	writeTasks(w, tasks, prefix)
+	writeCommands(w, cmds, prefix)
 	return w.Flush()
 }
 
-func writeTasks(w io.Writer, tasks map[string]config.Task, prefix string) {
-	names := make([]string, 0, len(tasks))
-	for name := range tasks {
+func writeCommands(w io.Writer, cmds map[string]config.Command, prefix string) {
+	names := make([]string, 0, len(cmds))
+	for name := range cmds {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
 	for _, name := range names {
-		task := tasks[name]
+		c := cmds[name]
 		full := name
 		if prefix != "" {
 			full = prefix + " " + name
 		}
-		if task.Command != "" {
-			label := full + argSignature(task.Args)
-			if task.Description == "" {
+		if c.Run != "" {
+			label := full + argSignature(c.Args)
+			if c.Description == "" {
 				fmt.Fprintf(w, "  %s\n", label)
 			} else {
-				fmt.Fprintf(w, "  %s\t- %s\n", label, task.Description)
+				fmt.Fprintf(w, "  %s\t- %s\n", label, c.Description)
 			}
 		}
-		writeTasks(w, task.Tasks, full)
+		writeCommands(w, c.Commands, full)
 	}
 }
 

@@ -28,73 +28,73 @@ func TestLoad(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
-		want    map[string]Task
+		want    map[string]Command
 		wantEnv map[string]string
 		wantErr bool
 	}{
 		{
 			name: "valid",
 			content: `
-tasks:
+commands:
   build:
     description: Build the project
-    command: go build -o bin/app
+    run: go build -o bin/app
   test:
-    command: go test ./...
+    run: go test ./...
 `,
-			want: map[string]Task{
-				"build": {Description: "Build the project", Command: "go build -o bin/app"},
-				"test":  {Command: "go test ./..."},
+			want: map[string]Command{
+				"build": {Description: "Build the project", Run: "go build -o bin/app"},
+				"test":  {Run: "go test ./..."},
 			},
 		},
 		{
-			name: "nested tasks",
+			name: "nested commands",
 			content: `
-tasks:
+commands:
   deploy:
     description: Deploy the app
-    tasks:
+    commands:
       staging:
-        command: ./deploy.sh staging
+        run: ./deploy.sh staging
       production:
         description: Deploy to production
-        command: ./deploy.sh production
+        run: ./deploy.sh production
 `,
-			want: map[string]Task{
+			want: map[string]Command{
 				"deploy": {
 					Description: "Deploy the app",
-					Tasks: map[string]Task{
-						"staging":    {Command: "./deploy.sh staging"},
-						"production": {Description: "Deploy to production", Command: "./deploy.sh production"},
+					Commands: map[string]Command{
+						"staging":    {Run: "./deploy.sh staging"},
+						"production": {Description: "Deploy to production", Run: "./deploy.sh production"},
 					},
 				},
 			},
 		},
 		{
-			name: "nested task with command and subtasks",
+			name: "nested command with run and subcommands",
 			content: `
-tasks:
+commands:
   db:
-    command: ./db.sh status
-    tasks:
+    run: ./db.sh status
+    commands:
       migrate:
-        command: ./db.sh migrate
+        run: ./db.sh migrate
 `,
-			want: map[string]Task{
+			want: map[string]Command{
 				"db": {
-					Command: "./db.sh status",
-					Tasks: map[string]Task{
-						"migrate": {Command: "./db.sh migrate"},
+					Run: "./db.sh status",
+					Commands: map[string]Command{
+						"migrate": {Run: "./db.sh migrate"},
 					},
 				},
 			},
 		},
 		{
-			name: "task with args",
+			name: "command with args",
 			content: `
-tasks:
+commands:
   deploy:
-    command: ./deploy.sh "$env" "$region"
+    run: ./deploy.sh "$env" "$region"
     args:
       - name: env
         description: target environment
@@ -103,9 +103,9 @@ tasks:
       - name: empty-default
         default: ""
 `,
-			want: map[string]Task{
+			want: map[string]Command{
 				"deploy": {
-					Command: `./deploy.sh "$env" "$region"`,
+					Run: `./deploy.sh "$env" "$region"`,
 					Args: []Arg{
 						{Name: "env", Description: "target environment"},
 						{Name: "region", Default: ptr("us-east-1")},
@@ -115,31 +115,31 @@ tasks:
 			},
 		},
 		{
-			name: "top-level and task env",
+			name: "top-level and command env",
 			content: `
 env:
   GREETING: hello
   SCOPE: top
-tasks:
+commands:
   deploy:
     env:
-      SCOPE: task
-    command: ./deploy.sh
-    tasks:
+      SCOPE: command
+    run: ./deploy.sh
+    commands:
       staging:
         env:
           SCOPE: staging
           EMPTY: ""
-        command: ./deploy.sh staging
+        run: ./deploy.sh staging
 `,
-			want: map[string]Task{
+			want: map[string]Command{
 				"deploy": {
-					Env:     map[string]string{"SCOPE": "task"},
-					Command: "./deploy.sh",
-					Tasks: map[string]Task{
+					Env: map[string]string{"SCOPE": "command"},
+					Run: "./deploy.sh",
+					Commands: map[string]Command{
 						"staging": {
-							Env:     map[string]string{"SCOPE": "staging", "EMPTY": ""},
-							Command: "./deploy.sh staging",
+							Env: map[string]string{"SCOPE": "staging", "EMPTY": ""},
+							Run: "./deploy.sh staging",
 						},
 					},
 				},
@@ -148,57 +148,57 @@ tasks:
 		},
 		{
 			name:    "top-level env with empty key",
-			content: "env:\n  \"\": value\ntasks:\n  build:\n    command: go build\n",
+			content: "env:\n  \"\": value\ncommands:\n  build:\n    run: go build\n",
 			wantErr: true,
 		},
 		{
-			name:    "task env with empty key",
-			content: "tasks:\n  build:\n    command: go build\n    env:\n      \"\": value\n",
+			name:    "command env with empty key",
+			content: "commands:\n  build:\n    run: go build\n    env:\n      \"\": value\n",
 			wantErr: true,
 		},
 		{
 			name:    "env key containing equals",
-			content: "tasks:\n  build:\n    command: go build\n    env:\n      \"A=B\": value\n",
+			content: "commands:\n  build:\n    run: go build\n    env:\n      \"A=B\": value\n",
 			wantErr: true,
 		},
 		{
-			name:    "args without command",
-			content: "tasks:\n  deploy:\n    args:\n      - name: env\n    tasks:\n      staging:\n        command: ./deploy.sh staging\n",
+			name:    "args without run",
+			content: "commands:\n  deploy:\n    args:\n      - name: env\n    commands:\n      staging:\n        run: ./deploy.sh staging\n",
 			wantErr: true,
 		},
 		{
 			name:    "arg without name",
-			content: "tasks:\n  deploy:\n    command: ./deploy.sh\n    args:\n      - default: prod\n",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - default: prod\n",
 			wantErr: true,
 		},
 		{
 			name:    "duplicate arg names",
-			content: "tasks:\n  deploy:\n    command: ./deploy.sh\n    args:\n      - name: env\n      - name: env\n",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - name: env\n      - name: env\n",
 			wantErr: true,
 		},
 		{
 			name:    "required arg after default",
-			content: "tasks:\n  deploy:\n    command: ./deploy.sh\n    args:\n      - name: env\n        default: prod\n      - name: region\n",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - name: env\n        default: prod\n      - name: region\n",
 			wantErr: true,
 		},
 		{
-			name:    "no tasks",
-			content: "tasks: {}\n",
+			name:    "no commands",
+			content: "commands: {}\n",
 			wantErr: true,
 		},
 		{
-			name:    "missing command",
-			content: "tasks:\n  build:\n    description: no command\n",
+			name:    "missing run",
+			content: "commands:\n  build:\n    description: no run\n",
 			wantErr: true,
 		},
 		{
-			name:    "nested task missing command and subtasks",
-			content: "tasks:\n  deploy:\n    tasks:\n      staging:\n        description: no command\n",
+			name:    "nested command missing run and subcommands",
+			content: "commands:\n  deploy:\n    commands:\n      staging:\n        description: no run\n",
 			wantErr: true,
 		},
 		{
 			name:    "broken yaml",
-			content: "tasks: [\n",
+			content: "commands: [\n",
 			wantErr: true,
 		},
 	}
@@ -217,8 +217,8 @@ tasks:
 			if tt.wantErr {
 				return
 			}
-			if !reflect.DeepEqual(got.Tasks, tt.want) {
-				t.Errorf("Load() tasks = %+v, want %+v", got.Tasks, tt.want)
+			if !reflect.DeepEqual(got.Commands, tt.want) {
+				t.Errorf("Load() commands = %+v, want %+v", got.Commands, tt.want)
 			}
 			if tt.wantEnv != nil && !reflect.DeepEqual(got.Env, tt.wantEnv) {
 				t.Errorf("Load() env = %+v, want %+v", got.Env, tt.wantEnv)
@@ -227,96 +227,148 @@ tasks:
 	}
 }
 
-func TestLoadExternalFile(t *testing.T) {
+func TestLoadIncludes(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
 		files   map[string]string
 		entry   string
-		want    map[string]Task
+		want    map[string]Command
 		wantErr string
 	}{
 		{
-			name: "basic expansion",
+			name: "top-level include merges flat",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  deploy:
-    description: Deploy tasks
-    file: ./deploy.run.yaml
+includes:
+  - ./common.yaml
+commands:
+  build:
+    run: go build ./...
 `,
-				"deploy.run.yaml": `
-tasks:
+				"common.yaml": `
+commands:
+  lint:
+    run: golangci-lint run
+  fmt:
+    description: Format code
+    run: gofmt -w .
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Command{
+				"build": {Run: "go build ./..."},
+				"lint":  {Run: "golangci-lint run"},
+				"fmt":   {Description: "Format code", Run: "gofmt -w ."},
+			},
+		},
+		{
+			name: "top-level include without local commands",
+			files: map[string]string{
+				".run.yaml": `
+includes:
+  - ./common.yaml
+`,
+				"common.yaml": `
+commands:
+  lint:
+    run: golangci-lint run
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Command{
+				"lint": {Run: "golangci-lint run"},
+			},
+		},
+		{
+			name: "command-level include nests as subcommands",
+			files: map[string]string{
+				".run.yaml": `
+commands:
+  deploy:
+    description: Deploy commands
+    includes:
+      - ./deploy.yaml
+`,
+				"deploy.yaml": `
+commands:
   staging:
-    command: ./deploy.sh staging
+    run: ./deploy.sh staging
   production:
     description: Deploy to production
-    command: ./deploy.sh production
+    run: ./deploy.sh production
 `,
 			},
 			entry: ".run.yaml",
-			want: map[string]Task{
+			want: map[string]Command{
 				"deploy": {
-					Description: "Deploy tasks",
-					Tasks: map[string]Task{
-						"staging":    {Command: "./deploy.sh staging"},
-						"production": {Description: "Deploy to production", Command: "./deploy.sh production"},
+					Description: "Deploy commands",
+					Commands: map[string]Command{
+						"staging":    {Run: "./deploy.sh staging"},
+						"production": {Description: "Deploy to production", Run: "./deploy.sh production"},
 					},
 				},
 			},
 		},
 		{
-			name: "file with command",
+			name: "include combined with run and local subcommands",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
+commands:
   db:
-    command: ./db.sh status
-    file: ./db.run.yaml
+    run: ./db.sh status
+    includes:
+      - ./db.yaml
+    commands:
+      seed:
+        run: ./db.sh seed
 `,
-				"db.run.yaml": `
-tasks:
+				"db.yaml": `
+commands:
   migrate:
-    command: ./db.sh migrate
+    run: ./db.sh migrate
 `,
 			},
 			entry: ".run.yaml",
-			want: map[string]Task{
+			want: map[string]Command{
 				"db": {
-					Command: "./db.sh status",
-					Tasks: map[string]Task{
-						"migrate": {Command: "./db.sh migrate"},
+					Run: "./db.sh status",
+					Commands: map[string]Command{
+						"seed":    {Run: "./db.sh seed"},
+						"migrate": {Run: "./db.sh migrate"},
 					},
 				},
 			},
 		},
 		{
-			name: "nested external file resolves relative to its own dir",
+			name: "nested include resolves relative to its own dir",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
+commands:
   deploy:
-    file: ./sub/deploy.run.yaml
+    includes:
+      - ./sub/deploy.yaml
 `,
-				"sub/deploy.run.yaml": `
-tasks:
+				"sub/deploy.yaml": `
+commands:
   app:
-    file: ./more.run.yaml
+    includes:
+      - ./more.yaml
 `,
-				"sub/more.run.yaml": `
-tasks:
+				"sub/more.yaml": `
+commands:
   staging:
-    command: ./deploy.sh staging
+    run: ./deploy.sh staging
 `,
 			},
 			entry: ".run.yaml",
-			want: map[string]Task{
+			want: map[string]Command{
 				"deploy": {
-					Tasks: map[string]Task{
+					Commands: map[string]Command{
 						"app": {
-							Tasks: map[string]Task{
-								"staging": {Command: "./deploy.sh staging"},
+							Commands: map[string]Command{
+								"staging": {Run: "./deploy.sh staging"},
 							},
 						},
 					},
@@ -324,162 +376,212 @@ tasks:
 			},
 		},
 		{
-			name: "file on nested inline task",
+			name: "same file included from two branches",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  ops:
-    tasks:
-      deploy:
-        file: ./deploy.run.yaml
+commands:
+  a:
+    includes:
+      - ./shared.yaml
+  b:
+    includes:
+      - ./shared.yaml
 `,
-				"deploy.run.yaml": `
-tasks:
-  staging:
-    command: ./deploy.sh staging
+				"shared.yaml": `
+commands:
+  ping:
+    run: echo pong
 `,
 			},
 			entry: ".run.yaml",
-			want: map[string]Task{
-				"ops": {
-					Tasks: map[string]Task{
-						"deploy": {
-							Tasks: map[string]Task{
-								"staging": {Command: "./deploy.sh staging"},
-							},
-						},
-					},
-				},
+			want: map[string]Command{
+				"a": {Commands: map[string]Command{"ping": {Run: "echo pong"}}},
+				"b": {Commands: map[string]Command{"ping": {Run: "echo pong"}}},
 			},
 		},
 		{
-			name: "external file top-level env merges into referencing task",
+			name: "included env applies to included commands only",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  deploy:
-    env:
-      A: outer
-      B: outer
-    file: ./deploy.run.yaml
+includes:
+  - ./inc.yaml
+commands:
+  local:
+    run: echo local
 `,
-				"deploy.run.yaml": `
+				"inc.yaml": `
 env:
+  A: file
   B: file
-  C: file
-tasks:
-  staging:
-    command: ./deploy.sh staging
+commands:
+  inc:
+    env:
+      A: own
+    run: echo inc
 `,
 			},
 			entry: ".run.yaml",
-			want: map[string]Task{
-				"deploy": {
-					Env: map[string]string{"A": "outer", "B": "file", "C": "file"},
-					Tasks: map[string]Task{
-						"staging": {Command: "./deploy.sh staging"},
-					},
+			want: map[string]Command{
+				"local": {Run: "echo local"},
+				"inc": {
+					Env: map[string]string{"A": "own", "B": "file"},
+					Run: "echo inc",
 				},
 			},
 		},
 		{
-			name: "file and inline tasks are mutually exclusive",
+			name: "inner include env wins over outer include env",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  deploy:
-    file: ./deploy.run.yaml
-    tasks:
-      staging:
-        command: ./deploy.sh staging
+includes:
+  - ./outer.yaml
+`,
+				"outer.yaml": `
+env:
+  A: outer
+  B: outer
+includes:
+  - ./inner.yaml
+`,
+				"inner.yaml": `
+env:
+  A: inner
+commands:
+  c:
+    run: echo c
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Command{
+				"c": {
+					Env: map[string]string{"A": "inner", "B": "outer"},
+					Run: "echo c",
+				},
+			},
+		},
+		{
+			name: "conflict with local command",
+			files: map[string]string{
+				".run.yaml": `
+includes:
+  - ./inc.yaml
+commands:
+  build:
+    run: go build ./...
+`,
+				"inc.yaml": `
+commands:
+  build:
+    run: make build
 `,
 			},
 			entry:   ".run.yaml",
-			wantErr: "file and tasks are mutually exclusive",
+			wantErr: `command "build" already defined`,
 		},
 		{
-			name: "missing external file",
+			name: "conflict between includes",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  deploy:
-    file: ./nosuch.yaml
+includes:
+  - ./a.yaml
+  - ./b.yaml
+`,
+				"a.yaml": `
+commands:
+  lint:
+    run: echo a
+`,
+				"b.yaml": `
+commands:
+  lint:
+    run: echo b
 `,
 			},
 			entry:   ".run.yaml",
-			wantErr: `task "deploy"`,
+			wantErr: `command "lint" already defined`,
 		},
 		{
-			name: "broken yaml in external file",
+			name: "missing included file",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
+commands:
   deploy:
-    file: ./deploy.run.yaml
+    includes:
+      - ./nosuch.yaml
 `,
-				"deploy.run.yaml": "tasks: [\n",
+			},
+			entry:   ".run.yaml",
+			wantErr: `command "deploy"`,
+		},
+		{
+			name: "broken yaml in included file",
+			files: map[string]string{
+				".run.yaml": `
+includes:
+  - ./inc.yaml
+`,
+				"inc.yaml": "commands: [\n",
 			},
 			entry:   ".run.yaml",
 			wantErr: "failed to parse",
 		},
 		{
-			name: "empty external tasks",
+			name: "included file without commands",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  deploy:
-    file: ./deploy.run.yaml
+includes:
+  - ./inc.yaml
 `,
-				"deploy.run.yaml": "tasks: {}\n",
+				"inc.yaml": "env:\n  A: a\n",
 			},
 			entry:   ".run.yaml",
-			wantErr: "no tasks defined in",
+			wantErr: "no commands defined in",
 		},
 		{
-			name: "invalid task inside external file",
+			name: "invalid command inside included file",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
+commands:
   deploy:
-    file: ./deploy.run.yaml
+    includes:
+      - ./deploy.yaml
 `,
-				"deploy.run.yaml": `
-tasks:
+				"deploy.yaml": `
+commands:
   staging:
-    description: no command
+    description: no run
 `,
 			},
 			entry:   ".run.yaml",
-			wantErr: `task "deploy staging" has no command or subtasks`,
+			wantErr: `command "deploy staging" has no run or subcommands`,
 		},
 		{
-			name: "circular reference between files",
+			name: "circular include between files",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  a:
-    file: ./b.run.yaml
+includes:
+  - ./b.yaml
 `,
-				"b.run.yaml": `
-tasks:
+				"b.yaml": `
+commands:
   b:
-    file: ./.run.yaml
+    includes:
+      - ./.run.yaml
 `,
 			},
 			entry:   ".run.yaml",
-			wantErr: "circular task file reference",
+			wantErr: "circular include",
 		},
 		{
-			name: "self reference via non-clean path",
+			name: "self include via non-clean path",
 			files: map[string]string{
 				".run.yaml": `
-tasks:
-  a:
-    file: ./sub/../.run.yaml
+includes:
+  - ./sub/../.run.yaml
 `,
 			},
 			entry:   ".run.yaml",
-			wantErr: "circular task file reference",
+			wantErr: "circular include",
 		},
 	}
 
@@ -505,35 +607,35 @@ tasks:
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
-			if !reflect.DeepEqual(got.Tasks, tt.want) {
-				t.Errorf("Load() tasks = %+v, want %+v", got.Tasks, tt.want)
+			if !reflect.DeepEqual(got.Commands, tt.want) {
+				t.Errorf("Load() commands = %+v, want %+v", got.Commands, tt.want)
 			}
 		})
 	}
 }
 
-func TestLoadExternalFileAbsolutePath(t *testing.T) {
+func TestLoadIncludeAbsolutePath(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	external := filepath.Join(dir, "deploy.run.yaml")
-	writeFile(t, external, "tasks:\n  staging:\n    command: ./deploy.sh staging\n")
+	external := filepath.Join(dir, "deploy.yaml")
+	writeFile(t, external, "commands:\n  staging:\n    run: ./deploy.sh staging\n")
 	entry := filepath.Join(dir, ".run.yaml")
-	writeFile(t, entry, "tasks:\n  deploy:\n    file: "+external+"\n")
+	writeFile(t, entry, "commands:\n  deploy:\n    includes:\n      - "+external+"\n")
 
 	got, err := Load(entry)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	want := map[string]Task{
+	want := map[string]Command{
 		"deploy": {
-			Tasks: map[string]Task{
-				"staging": {Command: "./deploy.sh staging"},
+			Commands: map[string]Command{
+				"staging": {Run: "./deploy.sh staging"},
 			},
 		},
 	}
-	if !reflect.DeepEqual(got.Tasks, want) {
-		t.Errorf("Load() tasks = %+v, want %+v", got.Tasks, want)
+	if !reflect.DeepEqual(got.Commands, want) {
+		t.Errorf("Load() commands = %+v, want %+v", got.Commands, want)
 	}
 }
 

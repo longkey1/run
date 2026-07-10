@@ -14,8 +14,8 @@ func TestFind(t *testing.T) {
 		t.Setenv("RUN_CONFIG", "")
 		t.Setenv("HOME", filepath.Join(root, "home"))
 
-		taskFile := filepath.Join(root, "project", ".run.yaml")
-		writeFile(t, taskFile, "tasks: {}\n")
+		cmdFile := filepath.Join(root, "project", ".run.yaml")
+		writeFile(t, cmdFile, "commands: {}\n")
 
 		cwd := filepath.Join(root, "project", "sub", "deep")
 		writeFile(t, filepath.Join(cwd, ".keep"), "")
@@ -24,8 +24,8 @@ func TestFind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Find() error = %v", err)
 		}
-		if gotPath != taskFile {
-			t.Errorf("Find() path = %q, want %q", gotPath, taskFile)
+		if gotPath != cmdFile {
+			t.Errorf("Find() path = %q, want %q", gotPath, cmdFile)
 		}
 		if want := filepath.Join(root, "project"); gotWorkDir != want {
 			t.Errorf("Find() workDir = %q, want %q", gotWorkDir, want)
@@ -37,15 +37,15 @@ func TestFind(t *testing.T) {
 		t.Setenv("RUN_CONFIG", "")
 		t.Setenv("HOME", filepath.Join(root, "home"))
 
-		taskFile := filepath.Join(root, "project", ".run.yml")
-		writeFile(t, taskFile, "tasks: {}\n")
+		cmdFile := filepath.Join(root, "project", ".run.yml")
+		writeFile(t, cmdFile, "commands: {}\n")
 
 		gotPath, _, err := Find(filepath.Join(root, "project"))
 		if err != nil {
 			t.Fatalf("Find() error = %v", err)
 		}
-		if gotPath != taskFile {
-			t.Errorf("Find() path = %q, want %q", gotPath, taskFile)
+		if gotPath != cmdFile {
+			t.Errorf("Find() path = %q, want %q", gotPath, cmdFile)
 		}
 	})
 
@@ -56,7 +56,7 @@ func TestFind(t *testing.T) {
 		t.Setenv("HOME", home)
 
 		globalFile := filepath.Join(home, ".config", "run", "run.yaml")
-		writeFile(t, globalFile, "tasks: {}\n")
+		writeFile(t, globalFile, "commands: {}\n")
 
 		cwd := filepath.Join(root, "elsewhere")
 		writeFile(t, filepath.Join(cwd, ".keep"), "")
@@ -78,11 +78,11 @@ func TestFind(t *testing.T) {
 		t.Setenv("HOME", filepath.Join(root, "home"))
 
 		envFile := filepath.Join(root, "custom.yaml")
-		writeFile(t, envFile, "tasks: {}\n")
+		writeFile(t, envFile, "commands: {}\n")
 		t.Setenv("RUN_CONFIG", envFile)
 
 		cwd := filepath.Join(root, "cwd")
-		writeFile(t, filepath.Join(cwd, ".run.yaml"), "tasks: {}\n")
+		writeFile(t, filepath.Join(cwd, ".run.yaml"), "commands: {}\n")
 
 		gotPath, gotWorkDir, err := Find(cwd)
 		if err != nil {
@@ -106,7 +106,7 @@ func TestFind(t *testing.T) {
 		}
 	})
 
-	t.Run("no task file found", func(t *testing.T) {
+	t.Run("no command file found", func(t *testing.T) {
 		root := t.TempDir()
 		t.Setenv("RUN_CONFIG", "")
 		t.Setenv("HOME", filepath.Join(root, "home"))

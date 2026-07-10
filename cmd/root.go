@@ -15,12 +15,13 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "run [flags] [task [subtask...]]",
-	Short: "A simple task runner",
-	Long: `run is a simple task runner that executes tasks defined in YAML files (.run.yaml).
+	Use:   "run [flags] [command [subcommand...]]",
+	Short: "A CLI runtime driven by YAML command definitions",
+	Long: `run is a CLI runtime: it turns commands defined in YAML files (.run.yaml)
+into a command-line interface and executes them.
 
-Arguments without flags are always task names; run's own features are
-exposed only through flags, so any task name can be used freely.`,
+Arguments without flags are always command names; run's own features are
+exposed only through flags, so any command name can be used freely.`,
 	Args:          cobra.ArbitraryArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -35,32 +36,32 @@ exposed only through flags, so any task name can be used freely.`,
 		if l, _ := cmd.Flags().GetBool("list"); l || len(args) == 0 {
 			return runList(cmd)
 		}
-		return runTask(cmd, args)
+		return runCommand(cmd, args)
 	},
-	ValidArgsFunction: completeTasks,
+	ValidArgsFunction: completeCommands,
 }
 
-// completeTasks returns task names for shell completion, loading the
-// task file at completion time so candidates always reflect the
+// completeCommands returns command names for shell completion, loading
+// the command file at completion time so candidates always reflect the
 // current directory's .run.yaml. Already-typed arguments are resolved
-// as a path through nested tasks to complete the next level.
-func completeTasks(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+// as a path through nested commands to complete the next level.
+func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	tasks := cfg.Tasks
+	cmds := cfg.Commands
 	for _, name := range args {
-		t, ok := tasks[name]
+		c, ok := cmds[name]
 		if !ok {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		tasks = t.Tasks
+		cmds = c.Commands
 	}
 	var names []string
-	for name, t := range tasks {
-		if t.Description != "" {
-			name += "\t" + t.Description
+	for name, c := range cmds {
+		if c.Description != "" {
+			name += "\t" + c.Description
 		}
 		names = append(names, name)
 	}
@@ -68,14 +69,14 @@ func completeTasks(cmd *cobra.Command, args []string, toComplete string) ([]stri
 }
 
 func init() {
-	rootCmd.Flags().BoolP("list", "l", false, "List available tasks")
+	rootCmd.Flags().BoolP("list", "l", false, "List available commands")
 	rootCmd.Flags().Bool("version", false, "Show version information")
 	rootCmd.Flags().String("completion", "", "Generate shell completion script (bash|zsh|fish|powershell)")
-	// Flags must come before the task name; everything after the first
-	// non-flag argument is treated as part of the task path.
+	// Flags must come before the command name; everything after the first
+	// non-flag argument is treated as part of the command path.
 	rootCmd.Flags().SetInterspersed(false)
 	// Disable the default `help` and `completion` subcommands so those
-	// words remain usable as task names.
+	// words remain usable as command names.
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.SetHelpCommand(&cobra.Command{Use: "_help", Hidden: true})
 }
@@ -107,84 +108,85 @@ func loadConfig() (*config.Config, string, error) {
 	return cfg, workDir, nil
 }
 
-// runTask resolves the argument path through nested tasks and executes
-// the resolved task. A task without a command lists its subtasks.
+// runCommand resolves the argument path through nested commands and
+// executes the resolved command. A command without a run string lists
+// its subcommands.
 //
-// Arguments stop being task path segments at the first "--", or at the
-// first name that doesn't match a subtask of a command-bearing task;
-// the remainder is passed to the command as positional parameters.
-func runTask(cmd *cobra.Command, args []string) error {
+// Arguments stop being command path segments at the first "--", or at
+// the first name that doesn't match a subcommand of a runnable command;
+// the remainder is passed to the run string as positional parameters.
+func runCommand(cmd *cobra.Command, args []string) error {
 	cfg, workDir, err := loadConfig()
 	if err != nil {
 		return err
 	}
 
-	// SetInterspersed(false) leaves a "--" after the task name in args,
+	// SetInterspersed(false) leaves a "--" after the command name in args,
 	// so split it off here rather than via ArgsLenAtDash.
 	path := args
-	var taskArgs []string
+	var cmdArgs []string
 	explicit := false
 	if i := slices.Index(args, "--"); i >= 0 {
-		path, taskArgs, explicit = args[:i], args[i+1:], true
+		path, cmdArgs, explicit = args[:i], args[i+1:], true
 	}
 	if len(path) == 0 {
 		return runList(cmd)
 	}
 
-	tasks := cfg.Tasks
-	var task config.Task
+	cmds := cfg.Commands
+	var command config.Command
 	// Environment variables merge from outer to inner scopes, so
 	// deeper definitions override same-named keys.
 	env := make(map[string]string, len(cfg.Env))
 	maps.Copy(env, cfg.Env)
 	n := 0
 	for n < len(path) {
-		t, ok := tasks[path[n]]
+		c, ok := cmds[path[n]]
 		if !ok {
 			break
 		}
-		task = t
-		maps.Copy(env, t.Env)
-		tasks = t.Tasks
+		command = c
+		maps.Copy(env, c.Env)
+		cmds = c.Commands
 		n++
 	}
 	if n == 0 {
-		return fmt.Errorf("task %q not found", path[0])
+		return fmt.Errorf("command %q not found", path[0])
 	}
 	name := strings.Join(path[:n], " ")
 	if n < len(path) {
-		if explicit || task.Command == "" {
-			return fmt.Errorf("task %q has no subtask %q", name, path[n])
+		if explicit || command.Run == "" {
+			return fmt.Errorf("command %q has no subcommand %q", name, path[n])
 		}
-		taskArgs = path[n:]
+		cmdArgs = path[n:]
 	}
 
-	if task.Command == "" {
-		if len(taskArgs) > 0 {
-			return fmt.Errorf("task %q has no command", name)
+	if command.Run == "" {
+		if len(cmdArgs) > 0 {
+			return fmt.Errorf("command %q has no run", name)
 		}
-		return listTasks(cmd.OutOrStdout(), task.Tasks, name)
+		return listCommands(cmd.OutOrStdout(), command.Commands, name)
 	}
 
-	taskArgs, argEnv, err := applyArgs(task, name, taskArgs)
+	cmdArgs, argEnv, err := applyArgs(command, name, cmdArgs)
 	if err != nil {
 		return err
 	}
 	maps.Copy(env, argEnv) // declared arguments have the highest precedence
-	return runner.Run(task.Command, workDir, taskArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return runner.Run(command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-// applyArgs validates CLI arguments against the task's declared args,
-// fills in defaults for missing trailing arguments, and builds an
+// applyArgs validates CLI arguments against the command's declared
+// args, fills in defaults for missing trailing arguments, and builds an
 // environment variable for each declared argument. Arguments beyond
 // the declaration are passed through untouched.
-func applyArgs(task config.Task, name string, args []string) ([]string, map[string]string, error) {
-	if len(task.Args) == 0 {
+func applyArgs(command config.Command, name string, args []string) ([]string, map[string]string, error) {
+	if len(command.Args) == 0 {
 		return args, nil, nil
 	}
 	final := slices.Clone(args)
-	env := make(map[string]string, len(task.Args))
-	for i, decl := range task.Args {
+	env := make(map[string]string, len(command.Args))
+	for i, decl := range command.Args {
 		var value string
 		switch {
 		case i < len(args):
@@ -193,7 +195,7 @@ func applyArgs(task config.Task, name string, args []string) ([]string, map[stri
 			value = *decl.Default
 			final = append(final, value)
 		default:
-			return nil, nil, fmt.Errorf("task %q: missing required argument %q", name, decl.Name)
+			return nil, nil, fmt.Errorf("command %q: missing required argument %q", name, decl.Name)
 		}
 		env[decl.Name] = value
 	}

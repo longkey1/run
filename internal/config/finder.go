@@ -10,14 +10,14 @@ var localNames = []string{".run.yaml", ".run.yml"}
 
 var globalNames = []string{"run.yaml", "run.yml"}
 
-// Find locates a task definition file and returns its path along with the
-// working directory tasks should run in.
+// Find locates a command definition file and returns its path along with
+// the working directory commands should run in.
 //
 // Search order:
-//  1. $RUN_CONFIG (tasks run in the current directory)
+//  1. $RUN_CONFIG (commands run in the current directory)
 //  2. .run.yaml / .run.yml in cwd or any ancestor directory
-//     (tasks run in the directory containing the file)
-//  3. ~/.config/run/run.yaml / run.yml (tasks run in the current directory)
+//     (commands run in the directory containing the file)
+//  3. ~/.config/run/run.yaml / run.yml (commands run in the current directory)
 func Find(cwd string) (path string, workDir string, err error) {
 	if env := os.Getenv("RUN_CONFIG"); env != "" {
 		if _, err := os.Stat(env); err != nil {
@@ -53,5 +53,5 @@ func Find(cwd string) (path string, workDir string, err error) {
 		}
 	}
 
-	return "", "", fmt.Errorf("no task file found (.run.yaml or %s)", filepath.Join(globalDir, "run.yaml"))
+	return "", "", fmt.Errorf("no command file found (.run.yaml or %s)", filepath.Join(globalDir, "run.yaml"))
 }

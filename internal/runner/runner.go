@@ -8,14 +8,14 @@ import (
 	"os/exec"
 )
 
-// ExitError carries the exit code of a failed task so it can be
+// ExitError carries the exit code of a failed command so it can be
 // propagated as the process exit code.
 type ExitError struct {
 	Code int
 }
 
 func (e *ExitError) Error() string {
-	return fmt.Sprintf("task failed with exit code %d", e.Code)
+	return fmt.Sprintf("command failed with exit code %d", e.Code)
 }
 
 // Run executes a command string with `sh -c` in the given directory.
