@@ -1,7 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -132,6 +135,10 @@ func Load(path string) (*Config, error) {
 }
 
 // loadFile reads and parses a single command file without expansion.
+// Unknown keys are a parse error, so a misspelled key (e.g. argments:)
+// fails loudly instead of silently dropping the declaration. An empty
+// file decodes to an empty config; Validate rejects it later with a
+// clearer error than the decoder's io.EOF.
 func loadFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -139,7 +146,9 @@ func loadFile(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 

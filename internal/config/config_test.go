@@ -364,6 +364,31 @@ commands:
 			content: "commands: [\n",
 			wantErr: true,
 		},
+		{
+			name:    "empty file",
+			content: "",
+			wantErr: true,
+		},
+		{
+			name:    "unknown top-level key",
+			content: "comands:\n  build:\n    run: go build\n",
+			wantErr: true,
+		},
+		{
+			name:    "unknown command key",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    argments:\n      - name: env\n",
+			wantErr: true,
+		},
+		{
+			name:    "unknown argument key",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    arguments:\n      - name: env\n        defualt: prod\n",
+			wantErr: true,
+		},
+		{
+			name:    "unknown option key",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: force\n        typ: bool\n",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

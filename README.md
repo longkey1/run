@@ -300,6 +300,8 @@ The file form and the directory form are interchangeable; having both in the sam
 
 Without `$RUN_CONFIG`, the local and global files are **merged**: commands defined in the global file are always available, even inside a project with its own `.run.yaml`. On a top-level name collision the local definition wins and shadows the entire global command (subtree included) — like `PATH` lookup. Each file keeps its own top-level `env:` and `shell:`; they apply only to the commands that file defines and never leak into the other file's commands.
 
+Command files are parsed strictly: an unknown key anywhere (e.g. a misspelled `argments:`) is a load error, reported with its line number. All unknown-key errors in a file are listed at once.
+
 ## Working directory
 
 - Commands from a local file (`.run.yaml` found by ancestor search) run in **the directory containing the file**, like `make` and `just`. For the directory form this is the directory containing `.run/`, not `.run/` itself. Relative paths in `run:` strings stay stable regardless of where you invoke `run`.
