@@ -12,10 +12,12 @@ type Config struct {
 	Tasks map[string]Task `yaml:"tasks"`
 }
 
-// Task represents a single task definition.
+// Task represents a single task definition. A task may define a
+// command, nested subtasks, or both.
 type Task struct {
-	Description string `yaml:"description"`
-	Command     string `yaml:"command"`
+	Description string          `yaml:"description"`
+	Command     string          `yaml:"command"`
+	Tasks       map[string]Task `yaml:"tasks"`
 }
 
 // Load reads and parses a task definition file.
@@ -42,9 +44,20 @@ func (c *Config) Validate() error {
 	if len(c.Tasks) == 0 {
 		return fmt.Errorf("no tasks defined")
 	}
-	for name, task := range c.Tasks {
-		if task.Command == "" {
-			return fmt.Errorf("task %q has no command", name)
+	return validateTasks(c.Tasks, "")
+}
+
+func validateTasks(tasks map[string]Task, prefix string) error {
+	for name, task := range tasks {
+		full := name
+		if prefix != "" {
+			full = prefix + " " + name
+		}
+		if task.Command == "" && len(task.Tasks) == 0 {
+			return fmt.Errorf("task %q has no command or subtasks", full)
+		}
+		if err := validateTasks(task.Tasks, full); err != nil {
+			return err
 		}
 	}
 	return nil

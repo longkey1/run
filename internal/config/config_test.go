@@ -44,6 +44,48 @@ tasks:
 			},
 		},
 		{
+			name: "nested tasks",
+			content: `
+tasks:
+  deploy:
+    description: Deploy the app
+    tasks:
+      staging:
+        command: ./deploy.sh staging
+      production:
+        description: Deploy to production
+        command: ./deploy.sh production
+`,
+			want: map[string]Task{
+				"deploy": {
+					Description: "Deploy the app",
+					Tasks: map[string]Task{
+						"staging":    {Command: "./deploy.sh staging"},
+						"production": {Description: "Deploy to production", Command: "./deploy.sh production"},
+					},
+				},
+			},
+		},
+		{
+			name: "nested task with command and subtasks",
+			content: `
+tasks:
+  db:
+    command: ./db.sh status
+    tasks:
+      migrate:
+        command: ./db.sh migrate
+`,
+			want: map[string]Task{
+				"db": {
+					Command: "./db.sh status",
+					Tasks: map[string]Task{
+						"migrate": {Command: "./db.sh migrate"},
+					},
+				},
+			},
+		},
+		{
 			name:    "no tasks",
 			content: "tasks: {}\n",
 			wantErr: true,
@@ -51,6 +93,11 @@ tasks:
 		{
 			name:    "missing command",
 			content: "tasks:\n  build:\n    description: no command\n",
+			wantErr: true,
+		},
+		{
+			name:    "nested task missing command and subtasks",
+			content: "tasks:\n  deploy:\n    tasks:\n      staging:\n        description: no command\n",
 			wantErr: true,
 		},
 		{

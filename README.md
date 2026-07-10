@@ -25,19 +25,42 @@ tasks:
     description: Run tests
     command: go test ./...
   deploy:
-    description: Build and deploy
-    command: |
-      go build -o bin/app
-      scp bin/app server:/usr/local/bin/
+    description: Deploy the app
+    tasks:
+      staging:
+        command: ./deploy.sh staging
+      production:
+        command: ./deploy.sh production
 ```
 
 Then:
 
 ```sh
-run            # list tasks (same as `run list`)
-run build      # run the "build" task
-run version    # show version information
+run                    # list tasks
+run build              # run the "build" task
+run deploy staging     # run a nested task
 ```
+
+## Nested tasks
+
+Tasks can be nested with `tasks:` to form subcommands:
+
+- `run deploy staging` walks the task tree by argument path.
+- A task may define `command`, nested `tasks`, or both. With both, `run deploy` runs its own command; without a command, `run deploy` lists its subtasks.
+- `run` / `run --list` shows runnable tasks flattened with their full path (e.g. `deploy staging`).
+
+## Built-in flags
+
+All of run's own features are flags, so bare arguments are always task names and there are no reserved task names:
+
+```sh
+run --list             # list tasks (same as plain `run`), also -l
+run --version          # show version information
+run --completion zsh   # generate shell completion (bash|zsh|fish|powershell)
+run --help             # show help
+```
+
+Flags must come before the task name; everything after the first non-flag argument is treated as part of the task path.
 
 ## Task file resolution
 
@@ -51,10 +74,6 @@ run version    # show version information
 
 - Local task file (`.run.yaml` found by ancestor search): commands run in **the directory containing the task file**, like `make` and `just`. Relative paths in commands stay stable regardless of where you invoke `run`.
 - Global task file or `$RUN_CONFIG`: commands run in the current directory.
-
-## Reserved task names
-
-`list`, `ls`, `version`, `help`, and `completion` are subcommands and take precedence over tasks with the same name. Avoid using them as task names.
 
 ## Task execution
 

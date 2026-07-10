@@ -32,12 +32,15 @@ Pushing a `v*` tag triggers `.github/workflows/gorelease.yml`, which builds mult
 ## Architecture
 
 - `main.go` — entry point, calls `cmd.Execute()`
-- `cmd/` — Cobra commands. Each file registers itself to `rootCmd` in `init()`
-  - `root.go` — `run <task>` executes a task via rootCmd's `RunE`; no args shows the task list. Task exit codes are propagated via `runner.ExitError` in `Execute()`
-  - `list.go` — `list` / `ls` subcommand
-  - `version.go` — `version` subcommand
-- `internal/config/` — YAML schema (`Config`, `Task`), loading/validation (`config.go`), and task file resolution (`finder.go`: `$RUN_CONFIG` → ancestor search for `.run.yaml` → `~/.config/run/run.yaml`)
+- `cmd/` — Cobra root command. There are no subcommands: all built-in features are flags (`--list`/`-l`, `--version`, `--completion <shell>`), so bare arguments are always task names
+  - `root.go` — `run <task> [subtask...]` resolves the argument path through nested tasks via rootCmd's `RunE`; no args shows the task list. Cobra's default `help`/`completion` subcommands are disabled. Task exit codes are propagated via `runner.ExitError` in `Execute()`
+  - `list.go` — task listing helpers (`runList`, `listTasks`); nested tasks are flattened with space-joined paths
+- `internal/config/` — YAML schema (`Config`, `Task`; tasks nest via `Task.Tasks`), loading/validation (`config.go`), and task file resolution (`finder.go`: `$RUN_CONFIG` → ancestor search for `.run.yaml` → `~/.config/run/run.yaml`)
 - `internal/runner/` — executes commands with `sh -c`; `ExitError` carries the task's exit code
 - `internal/version/` — version info injected via ldflags at build time
 
-Key behavior: when a local `.run.yaml` is found by ancestor search, tasks run in the directory containing the file (like make/just). Subcommand names (`list`, `ls`, `version`, `help`, `completion`) shadow tasks with the same name.
+Key behavior:
+
+- When a local `.run.yaml` is found by ancestor search, tasks run in the directory containing the file (like make/just)
+- Tasks may define `command`, nested `tasks`, or both (validated recursively). A task with both runs its own command when invoked directly; a group without a command lists its subtasks
+- Flags must come before the task name (`SetInterspersed(false)`); everything after the first non-flag argument is part of the task path
