@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/longkey1/run/internal/config"
@@ -107,30 +108,89 @@ func loadConfig() (*config.Config, string, error) {
 
 // runTask resolves the argument path through nested tasks and executes
 // the resolved task. A task without a command lists its subtasks.
+//
+// Arguments stop being task path segments at the first "--", or at the
+// first name that doesn't match a subtask of a command-bearing task;
+// the remainder is passed to the command as positional parameters.
 func runTask(cmd *cobra.Command, args []string) error {
 	cfg, workDir, err := loadConfig()
 	if err != nil {
 		return err
 	}
 
+	// SetInterspersed(false) leaves a "--" after the task name in args,
+	// so split it off here rather than via ArgsLenAtDash.
+	path := args
+	var taskArgs []string
+	explicit := false
+	if i := slices.Index(args, "--"); i >= 0 {
+		path, taskArgs, explicit = args[:i], args[i+1:], true
+	}
+	if len(path) == 0 {
+		return runList(cmd)
+	}
+
 	tasks := cfg.Tasks
 	var task config.Task
-	for i, name := range args {
-		t, ok := tasks[name]
+	n := 0
+	for n < len(path) {
+		t, ok := tasks[path[n]]
 		if !ok {
-			if i == 0 {
-				return fmt.Errorf("task %q not found", name)
-			}
-			return fmt.Errorf("task %q has no subtask %q", strings.Join(args[:i], " "), name)
+			break
 		}
 		task = t
 		tasks = t.Tasks
+		n++
+	}
+	if n == 0 {
+		return fmt.Errorf("task %q not found", path[0])
+	}
+	name := strings.Join(path[:n], " ")
+	if n < len(path) {
+		if explicit || task.Command == "" {
+			return fmt.Errorf("task %q has no subtask %q", name, path[n])
+		}
+		taskArgs = path[n:]
 	}
 
 	if task.Command == "" {
-		return listTasks(cmd.OutOrStdout(), task.Tasks, strings.Join(args, " "))
+		if len(taskArgs) > 0 {
+			return fmt.Errorf("task %q has no command", name)
+		}
+		return listTasks(cmd.OutOrStdout(), task.Tasks, name)
 	}
-	return runner.Run(task.Command, workDir, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+
+	taskArgs, extraEnv, err := applyArgs(task, name, taskArgs)
+	if err != nil {
+		return err
+	}
+	return runner.Run(task.Command, workDir, taskArgs, extraEnv, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+}
+
+// applyArgs validates CLI arguments against the task's declared args,
+// fills in defaults for missing trailing arguments, and builds an
+// environment variable ("name=value") for each declared argument.
+// Arguments beyond the declaration are passed through untouched.
+func applyArgs(task config.Task, name string, args []string) ([]string, []string, error) {
+	if len(task.Args) == 0 {
+		return args, nil, nil
+	}
+	final := slices.Clone(args)
+	env := make([]string, 0, len(task.Args))
+	for i, decl := range task.Args {
+		var value string
+		switch {
+		case i < len(args):
+			value = args[i]
+		case decl.Default != nil:
+			value = *decl.Default
+			final = append(final, value)
+		default:
+			return nil, nil, fmt.Errorf("task %q: missing required argument %q", name, decl.Name)
+		}
+		env = append(env, decl.Name+"="+value)
+	}
+	return final, env, nil
 }
 
 func genCompletion(cmd *cobra.Command, shell string) error {

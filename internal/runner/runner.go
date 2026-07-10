@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 )
 
@@ -18,9 +19,15 @@ func (e *ExitError) Error() string {
 }
 
 // Run executes a command string with `sh -c` in the given directory.
-func Run(command, dir string, stdin io.Reader, stdout, stderr io.Writer) error {
-	cmd := exec.Command("sh", "-c", command)
+// args become the shell's positional parameters ($1, $2, ..., "$@")
+// with $0 set to "run". extraEnv entries ("name=value") are appended
+// to the current environment.
+func Run(command, dir string, args, extraEnv []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	cmd := exec.Command("sh", append([]string{"-c", command, "run"}, args...)...)
 	cmd.Dir = dir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

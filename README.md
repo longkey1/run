@@ -49,6 +49,55 @@ Tasks can be nested with `tasks:` to form subcommands:
 - A task may define `command`, nested `tasks`, or both. With both, `run deploy` runs its own command; without a command, `run deploy` lists its subtasks.
 - `run` / `run --list` shows runnable tasks flattened with their full path (e.g. `deploy staging`).
 
+## Task arguments
+
+Arguments after the task name are passed to the command as shell positional parameters:
+
+```yaml
+tasks:
+  greet:
+    command: echo "hello $1"
+  k:
+    description: kubectl wrapper
+    command: kubectl "$@"
+```
+
+```sh
+run greet world        # hello world
+run k get pods         # kubectl get pods ("$@" passes everything through)
+```
+
+- `$1`, `$2`, ... reference individual arguments; `"$@"` expands to all of them (quoting is handled by the shell, so spaces in arguments are preserved).
+- The task path is resolved greedily: names matching a subtask are path segments, and the rest become arguments. Use `--` to force the boundary when an argument collides with a subtask name (`run db -- migrate` passes `migrate` as `$1` instead of running the subtask).
+
+### Declared arguments
+
+A task can declare its arguments with `args:` to require them, give them defaults, and reference them by name:
+
+```yaml
+tasks:
+  deploy:
+    description: Deploy the app
+    args:
+      - name: env
+        description: target environment
+      - name: region
+        default: us-east-1
+    command: ./deploy.sh "$env" "$region"
+```
+
+```sh
+run deploy prod jp     # ./deploy.sh prod jp
+run deploy prod        # ./deploy.sh prod us-east-1 (default applied)
+run deploy             # error: task "deploy": missing required argument "env"
+```
+
+- CLI arguments map to declared args in order. Missing trailing arguments fall back to their `default`; a missing argument without a default is an error.
+- Each declared argument is available both positionally (`$1`, ...) and as an environment variable named after it (`$env`, `$region`). Defaults are applied to both.
+- Arguments beyond the declaration are still passed through (`"$@"` includes them), so declarations and pass-through wrappers compose.
+- Tasks without `args:` accept any number of arguments without validation.
+- `--list` shows the signature: `deploy <env> [region]` (`<...>` required, `[...]` has a default).
+
 ## External task files
 
 A task's subtasks can be defined in a separate file with `file:`:
@@ -106,7 +155,7 @@ Flags must come before the task name; everything after the first non-flag argume
 
 ## Task execution
 
-Commands are executed with `sh -c`. The exit code of the task is propagated as the exit code of `run`, so shell chaining like `run test && run build` works as expected.
+Commands are executed with `sh -c`, with task arguments passed as positional parameters (`$0` is `run`). The exit code of the task is propagated as the exit code of `run`, so shell chaining like `run test && run build` works as expected.
 
 ## License
 

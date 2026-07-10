@@ -15,6 +15,8 @@ func TestRun(t *testing.T) {
 	tests := []struct {
 		name       string
 		command    string
+		args       []string
+		env        []string
 		wantStdout string
 		wantCode   int // 0 means success
 	}{
@@ -33,6 +35,29 @@ func TestRun(t *testing.T) {
 			command:    "echo one\necho two",
 			wantStdout: "one\ntwo\n",
 		},
+		{
+			name:       "args become positional parameters",
+			command:    `echo "$1-$2"`,
+			args:       []string{"a", "b"},
+			wantStdout: "a-b\n",
+		},
+		{
+			name:       "all args via $@",
+			command:    `printf '%s\n' "$@"`,
+			args:       []string{"a", "b c", "d"},
+			wantStdout: "a\nb c\nd\n",
+		},
+		{
+			name:       "$0 is run",
+			command:    `echo "$0"`,
+			wantStdout: "run\n",
+		},
+		{
+			name:       "extra env is visible",
+			command:    `echo "$env-$region"`,
+			env:        []string{"env=prod", "region=jp"},
+			wantStdout: "prod-jp\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -40,7 +65,7 @@ func TestRun(t *testing.T) {
 			t.Parallel()
 
 			var stdout bytes.Buffer
-			err := Run(tt.command, t.TempDir(), nil, &stdout, io.Discard)
+			err := Run(tt.command, t.TempDir(), tt.args, tt.env, nil, &stdout, io.Discard)
 
 			if tt.wantCode == 0 {
 				if err != nil {
@@ -74,7 +99,7 @@ func TestRunWorkDir(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := Run("pwd -P", dir, nil, &stdout, io.Discard); err != nil {
+	if err := Run("pwd -P", dir, nil, nil, nil, &stdout, io.Discard); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != want {
@@ -86,7 +111,7 @@ func TestRunStderr(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
-	if err := Run("echo oops >&2", t.TempDir(), nil, &stdout, &stderr); err != nil {
+	if err := Run("echo oops >&2", t.TempDir(), nil, nil, nil, &stdout, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got := stderr.String(); got != "oops\n" {

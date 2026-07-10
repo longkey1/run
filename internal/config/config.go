@@ -22,7 +22,17 @@ type Task struct {
 	Description string          `yaml:"description"`
 	Command     string          `yaml:"command"`
 	File        string          `yaml:"file"`
+	Args        []Arg           `yaml:"args"`
 	Tasks       map[string]Task `yaml:"tasks"`
+}
+
+// Arg declares a named positional argument for a task's command.
+// Default is a pointer to distinguish an absent default (required
+// argument) from an explicit empty-string default.
+type Arg struct {
+	Name        string  `yaml:"name"`
+	Description string  `yaml:"description"`
+	Default     *string `yaml:"default"`
 }
 
 // Load reads and parses a task definition file, recursively expanding
@@ -133,8 +143,41 @@ func validateTasks(tasks map[string]Task, prefix string) error {
 		if task.Command == "" && len(task.Tasks) == 0 {
 			return fmt.Errorf("task %q has no command or subtasks", full)
 		}
+		if err := validateArgs(task, full); err != nil {
+			return err
+		}
 		if err := validateTasks(task.Tasks, full); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateArgs checks a task's args declaration. Args map CLI
+// arguments positionally, so an argument without a default may not
+// follow one with a default: it could never be filled without also
+// overriding the earlier default.
+func validateArgs(task Task, full string) error {
+	if len(task.Args) == 0 {
+		return nil
+	}
+	if task.Command == "" {
+		return fmt.Errorf("task %q declares args but has no command", full)
+	}
+	seen := make(map[string]bool, len(task.Args))
+	sawDefault := false
+	for _, arg := range task.Args {
+		if arg.Name == "" {
+			return fmt.Errorf("task %q has an argument without a name", full)
+		}
+		if seen[arg.Name] {
+			return fmt.Errorf("task %q has duplicate argument %q", full, arg.Name)
+		}
+		seen[arg.Name] = true
+		if arg.Default != nil {
+			sawDefault = true
+		} else if sawDefault {
+			return fmt.Errorf("task %q: required argument %q may not follow an argument with a default", full, arg.Name)
 		}
 	}
 	return nil

@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+func ptr(s string) *string { return &s }
+
 // writeFile creates a file with the given content, creating parent
 // directories as needed.
 func writeFile(t *testing.T, path, content string) {
@@ -85,6 +87,51 @@ tasks:
 					},
 				},
 			},
+		},
+		{
+			name: "task with args",
+			content: `
+tasks:
+  deploy:
+    command: ./deploy.sh "$env" "$region"
+    args:
+      - name: env
+        description: target environment
+      - name: region
+        default: us-east-1
+      - name: empty-default
+        default: ""
+`,
+			want: map[string]Task{
+				"deploy": {
+					Command: `./deploy.sh "$env" "$region"`,
+					Args: []Arg{
+						{Name: "env", Description: "target environment"},
+						{Name: "region", Default: ptr("us-east-1")},
+						{Name: "empty-default", Default: ptr("")},
+					},
+				},
+			},
+		},
+		{
+			name:    "args without command",
+			content: "tasks:\n  deploy:\n    args:\n      - name: env\n    tasks:\n      staging:\n        command: ./deploy.sh staging\n",
+			wantErr: true,
+		},
+		{
+			name:    "arg without name",
+			content: "tasks:\n  deploy:\n    command: ./deploy.sh\n    args:\n      - default: prod\n",
+			wantErr: true,
+		},
+		{
+			name:    "duplicate arg names",
+			content: "tasks:\n  deploy:\n    command: ./deploy.sh\n    args:\n      - name: env\n      - name: env\n",
+			wantErr: true,
+		},
+		{
+			name:    "required arg after default",
+			content: "tasks:\n  deploy:\n    command: ./deploy.sh\n    args:\n      - name: env\n        default: prod\n      - name: region\n",
+			wantErr: true,
 		},
 		{
 			name:    "no tasks",

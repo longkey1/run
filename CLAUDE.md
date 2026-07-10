@@ -33,10 +33,10 @@ Pushing a `v*` tag triggers `.github/workflows/gorelease.yml`, which builds mult
 
 - `main.go` — entry point, calls `cmd.Execute()`
 - `cmd/` — Cobra root command. There are no subcommands: all built-in features are flags (`--list`/`-l`, `--version`, `--completion <shell>`), so bare arguments are always task names
-  - `root.go` — `run <task> [subtask...]` resolves the argument path through nested tasks via rootCmd's `RunE`; no args shows the task list. Cobra's default `help`/`completion` subcommands are disabled. Task exit codes are propagated via `runner.ExitError` in `Execute()`
-  - `list.go` — task listing helpers (`runList`, `listTasks`); nested tasks are flattened with space-joined paths
+  - `root.go` — `run <task> [subtask... [args...]]` resolves the argument path through nested tasks via rootCmd's `RunE`; no args shows the task list. Path resolution is greedy: names matching a subtask are path segments, the rest become task arguments; a literal `--` (split manually in `runTask`, since `SetInterspersed(false)` keeps it in `args`) forces the boundary. `applyArgs` validates CLI arguments against a task's `args:` declaration, fills defaults, and builds per-argument environment variables. Cobra's default `help`/`completion` subcommands are disabled. Task exit codes are propagated via `runner.ExitError` in `Execute()`
+  - `list.go` — task listing helpers (`runList`, `listTasks`); nested tasks are flattened with space-joined paths, followed by the declared argument signature (`<required>` / `[defaulted]`)
 - `internal/config/` — YAML schema (`Config`, `Task`; tasks nest via `Task.Tasks`), loading/validation (`config.go`), and task file resolution (`finder.go`: `$RUN_CONFIG` → ancestor search for `.run.yaml` → `~/.config/run/run.yaml`). External task files referenced via `Task.File` are eagerly expanded at load time (`expandTasks`): relative paths resolve against the referencing file's directory, cycles are detected via an absolute-path chain, and `File` is cleared after expansion so the rest of the code only ever sees an inline task tree
-- `internal/runner/` — executes commands with `sh -c`; `ExitError` carries the task's exit code
+- `internal/runner/` — executes commands with `sh -c`; task arguments become the shell's positional parameters (`$1`, `"$@"`; `$0` is `run`) and declared arguments are also appended to the environment. `ExitError` carries the task's exit code
 - `internal/version/` — version info injected via ldflags at build time
 
 Key behavior:

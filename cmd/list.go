@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/longkey1/run/internal/config"
@@ -40,12 +41,27 @@ func writeTasks(w io.Writer, tasks map[string]config.Task, prefix string) {
 			full = prefix + " " + name
 		}
 		if task.Command != "" {
+			label := full + argSignature(task.Args)
 			if task.Description == "" {
-				fmt.Fprintf(w, "  %s\n", full)
+				fmt.Fprintf(w, "  %s\n", label)
 			} else {
-				fmt.Fprintf(w, "  %s\t- %s\n", full, task.Description)
+				fmt.Fprintf(w, "  %s\t- %s\n", label, task.Description)
 			}
 		}
 		writeTasks(w, task.Tasks, full)
 	}
+}
+
+// argSignature renders declared args as " <name>" for required
+// arguments and " [name]" for arguments with a default.
+func argSignature(args []config.Arg) string {
+	var b strings.Builder
+	for _, a := range args {
+		if a.Default != nil {
+			fmt.Fprintf(&b, " [%s]", a.Name)
+		} else {
+			fmt.Fprintf(&b, " <%s>", a.Name)
+		}
+	}
+	return b.String()
 }
