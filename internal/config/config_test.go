@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -125,6 +126,286 @@ tasks:
 				t.Errorf("Load() tasks = %+v, want %+v", got.Tasks, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadExternalFile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		files   map[string]string
+		entry   string
+		want    map[string]Task
+		wantErr string
+	}{
+		{
+			name: "basic expansion",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    description: Deploy tasks
+    file: ./deploy.run.yaml
+`,
+				"deploy.run.yaml": `
+tasks:
+  staging:
+    command: ./deploy.sh staging
+  production:
+    description: Deploy to production
+    command: ./deploy.sh production
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Task{
+				"deploy": {
+					Description: "Deploy tasks",
+					Tasks: map[string]Task{
+						"staging":    {Command: "./deploy.sh staging"},
+						"production": {Description: "Deploy to production", Command: "./deploy.sh production"},
+					},
+				},
+			},
+		},
+		{
+			name: "file with command",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  db:
+    command: ./db.sh status
+    file: ./db.run.yaml
+`,
+				"db.run.yaml": `
+tasks:
+  migrate:
+    command: ./db.sh migrate
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Task{
+				"db": {
+					Command: "./db.sh status",
+					Tasks: map[string]Task{
+						"migrate": {Command: "./db.sh migrate"},
+					},
+				},
+			},
+		},
+		{
+			name: "nested external file resolves relative to its own dir",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    file: ./sub/deploy.run.yaml
+`,
+				"sub/deploy.run.yaml": `
+tasks:
+  app:
+    file: ./more.run.yaml
+`,
+				"sub/more.run.yaml": `
+tasks:
+  staging:
+    command: ./deploy.sh staging
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Task{
+				"deploy": {
+					Tasks: map[string]Task{
+						"app": {
+							Tasks: map[string]Task{
+								"staging": {Command: "./deploy.sh staging"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "file on nested inline task",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  ops:
+    tasks:
+      deploy:
+        file: ./deploy.run.yaml
+`,
+				"deploy.run.yaml": `
+tasks:
+  staging:
+    command: ./deploy.sh staging
+`,
+			},
+			entry: ".run.yaml",
+			want: map[string]Task{
+				"ops": {
+					Tasks: map[string]Task{
+						"deploy": {
+							Tasks: map[string]Task{
+								"staging": {Command: "./deploy.sh staging"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "file and inline tasks are mutually exclusive",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    file: ./deploy.run.yaml
+    tasks:
+      staging:
+        command: ./deploy.sh staging
+`,
+			},
+			entry:   ".run.yaml",
+			wantErr: "file and tasks are mutually exclusive",
+		},
+		{
+			name: "missing external file",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    file: ./nosuch.yaml
+`,
+			},
+			entry:   ".run.yaml",
+			wantErr: `task "deploy"`,
+		},
+		{
+			name: "broken yaml in external file",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    file: ./deploy.run.yaml
+`,
+				"deploy.run.yaml": "tasks: [\n",
+			},
+			entry:   ".run.yaml",
+			wantErr: "failed to parse",
+		},
+		{
+			name: "empty external tasks",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    file: ./deploy.run.yaml
+`,
+				"deploy.run.yaml": "tasks: {}\n",
+			},
+			entry:   ".run.yaml",
+			wantErr: "no tasks defined in",
+		},
+		{
+			name: "invalid task inside external file",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  deploy:
+    file: ./deploy.run.yaml
+`,
+				"deploy.run.yaml": `
+tasks:
+  staging:
+    description: no command
+`,
+			},
+			entry:   ".run.yaml",
+			wantErr: `task "deploy staging" has no command or subtasks`,
+		},
+		{
+			name: "circular reference between files",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  a:
+    file: ./b.run.yaml
+`,
+				"b.run.yaml": `
+tasks:
+  b:
+    file: ./.run.yaml
+`,
+			},
+			entry:   ".run.yaml",
+			wantErr: "circular task file reference",
+		},
+		{
+			name: "self reference via non-clean path",
+			files: map[string]string{
+				".run.yaml": `
+tasks:
+  a:
+    file: ./sub/../.run.yaml
+`,
+			},
+			entry:   ".run.yaml",
+			wantErr: "circular task file reference",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			for path, content := range tt.files {
+				writeFile(t, filepath.Join(dir, path), content)
+			}
+
+			got, err := Load(filepath.Join(dir, tt.entry))
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("Load() error = nil, want error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Load() error = %v, want error containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if !reflect.DeepEqual(got.Tasks, tt.want) {
+				t.Errorf("Load() tasks = %+v, want %+v", got.Tasks, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadExternalFileAbsolutePath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	external := filepath.Join(dir, "deploy.run.yaml")
+	writeFile(t, external, "tasks:\n  staging:\n    command: ./deploy.sh staging\n")
+	entry := filepath.Join(dir, ".run.yaml")
+	writeFile(t, entry, "tasks:\n  deploy:\n    file: "+external+"\n")
+
+	got, err := Load(entry)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := map[string]Task{
+		"deploy": {
+			Tasks: map[string]Task{
+				"staging": {Command: "./deploy.sh staging"},
+			},
+		},
+	}
+	if !reflect.DeepEqual(got.Tasks, want) {
+		t.Errorf("Load() tasks = %+v, want %+v", got.Tasks, want)
 	}
 }
 

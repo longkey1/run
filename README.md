@@ -49,6 +49,35 @@ Tasks can be nested with `tasks:` to form subcommands:
 - A task may define `command`, nested `tasks`, or both. With both, `run deploy` runs its own command; without a command, `run deploy` lists its subtasks.
 - `run` / `run --list` shows runnable tasks flattened with their full path (e.g. `deploy staging`).
 
+## External task files
+
+A task's subtasks can be defined in a separate file with `file:`:
+
+```yaml
+# .run.yaml
+tasks:
+  deploy:
+    description: Deploy tasks
+    file: ./deploy.run.yaml
+```
+
+```yaml
+# deploy.run.yaml
+tasks:
+  staging:
+    command: ./deploy.sh staging
+  production:
+    command: ./deploy.sh production
+```
+
+Then `run deploy staging` works as if the tasks were defined inline.
+
+- The external file uses the same schema as `.run.yaml` (a top-level `tasks:` map), and may itself reference further files.
+- Relative paths resolve against the directory of the referencing file. Absolute paths are allowed; `~` is not expanded.
+- `file` can be combined with `command` (like `tasks` + `command`), but not with inline `tasks`.
+- External files only split up definitions: commands still run in the root task file's directory, and `--list` and shell completion include external tasks like inline ones.
+- Circular references are detected and reported as an error.
+
 ## Built-in flags
 
 All of run's own features are flags, so bare arguments are always task names and there are no reserved task names:
