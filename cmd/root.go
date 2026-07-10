@@ -23,7 +23,10 @@ into a command-line interface and executes them.
 
 Bare arguments are always command names, except the single reserved name
 "self", which groups run's own built-in features (run self list, run self
-version, run self completion).`,
+version, run self completion).
+
+"run <command> --help" shows a command's declared arguments and flags;
+use "run <command> -- --help" to pass a literal --help through instead.`,
 	Args:          cobra.ArbitraryArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -36,22 +39,53 @@ version, run self completion).`,
 	ValidArgsFunction: completeCommands,
 }
 
-// completeCommands returns command names for shell completion, loading
-// the command file at completion time so candidates always reflect the
-// current directory's .run.yaml. Already-typed arguments are resolved
-// as a path through nested commands to complete the next level.
+// completeCommands returns shell completion candidates, loading the
+// command file at completion time so they always reflect the current
+// directory's .run.yaml. Already-typed arguments are resolved as a
+// path through nested commands, mirroring runCommand's greedy
+// resolution: while still on the path it completes the next level's
+// command names; past it, a word starting with "-" completes the
+// resolved command's declared flags. Tokens after a literal "--",
+// flag-value positions, and positional positions get no candidates,
+// and nothing ever falls back to file completion.
 func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	cfg, _, err := loadConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+	// Tokens after a literal "--" are always literal positionals.
+	if slices.Contains(args, "--") {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 	cmds := cfg.Commands
-	for _, name := range args {
-		c, ok := cmds[name]
+	var command config.Command
+	n := 0
+	for n < len(args) {
+		c, ok := cmds[args[n]]
 		if !ok {
+			break
+		}
+		command = c
+		cmds = c.Commands
+		n++
+	}
+	rest := args[n:] // already-typed flags/positionals, never path segments
+	// The word being completed is a value flag's pending value, which
+	// runCommand takes literally even if it looks like a flag.
+	if awaitingFlagValue(command, rest) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	if strings.HasPrefix(toComplete, "-") {
+		if n == 0 || strings.Contains(toComplete, "=") {
+			// No command resolved yet, or the cursor is in the value
+			// part of --name=: nothing to suggest.
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		cmds = c.Commands
+		return completeFlags(command, rest, toComplete), cobra.ShellCompDirectiveNoFileComp
+	}
+	if n < len(args) {
+		// Past the path: this is a positional position.
+		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	var names []string
 	for name, c := range cmds {
@@ -61,6 +95,56 @@ func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]s
 		names = append(names, name)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+// awaitingFlagValue reports whether the word being completed is the
+// pending value of a declared value flag (space form "--name" as the
+// last typed token).
+func awaitingFlagValue(c config.Command, rest []string) bool {
+	if len(rest) == 0 {
+		return false
+	}
+	last := rest[len(rest)-1]
+	if !strings.HasPrefix(last, "--") || strings.Contains(last, "=") {
+		return false
+	}
+	for _, f := range c.Flags {
+		if f.Name == last[2:] {
+			return !f.IsBool()
+		}
+	}
+	return false
+}
+
+// completeFlags returns the command's declared flags matching the
+// typed prefix, in declaration order, with descriptions. Flags already
+// present among the typed tokens are skipped (repeats are legal but
+// last-wins, so re-suggesting them is pointless). A --help entry is
+// appended unless the command declares a flag named help itself.
+func completeFlags(c config.Command, rest []string, toComplete string) []string {
+	used := func(name string) bool {
+		for _, tok := range rest {
+			if tok == "--"+name || strings.HasPrefix(tok, "--"+name+"=") {
+				return true
+			}
+		}
+		return false
+	}
+	var flags []string
+	for _, f := range c.Flags {
+		candidate := "--" + f.Name
+		if !strings.HasPrefix(candidate, toComplete) || used(f.Name) {
+			continue
+		}
+		if f.Description != "" {
+			candidate += "\t" + f.Description
+		}
+		flags = append(flags, candidate)
+	}
+	if strings.HasPrefix("--help", toComplete) && !declaresFlag(c, "help") {
+		flags = append(flags, "--help\tshow this help")
+	}
+	return flags
 }
 
 func init() {
@@ -111,7 +195,9 @@ func loadConfig() (*config.Config, string, error) {
 // Arguments stop being command path segments at the first "--", or at
 // the first name that doesn't match a subcommand of a runnable command;
 // the remainder is passed to the run string as positional parameters,
-// after declared flags are extracted from the pre-"--" portion.
+// after declared flags are extracted from the pre-"--" portion. A
+// --help among the pre-"--" remainder shows the command's declared
+// help instead.
 func runCommand(cmd *cobra.Command, args []string) error {
 	cfg, workDir, err := loadConfig()
 	if err != nil {
@@ -154,12 +240,16 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("command %q not found", path[0])
 	}
 	name := strings.Join(path[:n], " ")
-	var rest []string // tokens after the resolved path, before any "--"
-	if n < len(path) {
-		if command.Run == "" {
-			return fmt.Errorf("command %q has no subcommand %q", name, path[n])
-		}
-		rest = path[n:]
+	rest := path[n:] // tokens after the resolved path, before any "--"
+	// A --help anywhere before "--" shows the command's declared help
+	// instead of running it — checked before resolveEnv so help never
+	// evaluates dynamic values. A declared flag named "help" opts the
+	// command out; "run cmd -- --help" passes a literal --help through.
+	if slices.Contains(rest, "--help") && !declaresFlag(command, "help") {
+		return commandHelp(cmd.OutOrStdout(), command, name)
+	}
+	if len(rest) > 0 && command.Run == "" {
+		return fmt.Errorf("command %q has no subcommand %q", name, rest[0])
 	}
 
 	if command.Run == "" {

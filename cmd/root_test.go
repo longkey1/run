@@ -117,6 +117,23 @@ commands:
         env:
           X: literal
         run: echo "$X"
+  described:
+    description: Deploy the app
+    args:
+      - name: env
+        description: target environment
+    flags:
+      - name: force
+        type: bool
+        description: skip confirmation
+      - name: from
+        default: "2026-01-01"
+    run: echo x
+  helpflag:
+    flags:
+      - name: help
+        type: bool
+    run: printf '%s\n' "help=$help" "$@"
 `
 
 // execCommand runs runCommand against a temp command file and captures
@@ -330,6 +347,21 @@ func TestRunCommand(t *testing.T) {
 			args:    []string{"dynoverride", "inner"},
 			wantOut: "literal\n",
 		},
+		{
+			name:    "--help after -- is a literal positional",
+			args:    []string{"echo", "--", "--help"},
+			wantOut: "--help\n",
+		},
+		{
+			name:    "-h is a positional, not help",
+			args:    []string{"echo", "-h"},
+			wantOut: "-h\n",
+		},
+		{
+			name:    "declared help flag disables interception",
+			args:    []string{"helpflag", "--help"},
+			wantOut: "help=true\n--help\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -348,6 +380,152 @@ func TestRunCommand(t *testing.T) {
 				t.Errorf("runCommand() output = %q, want %q", out, tt.wantOut)
 			}
 		})
+	}
+}
+
+func TestRunCommandHelp(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantOut string
+	}{
+		{
+			name: "full help with descriptions and default",
+			args: []string{"described", "--help"},
+			wantOut: `Deploy the app
+
+Usage:
+  run described <env> [--force] [--from <from>]
+
+Arguments:
+  <env>  target environment
+
+Options:
+  --force        skip confirmation
+  --from <from>  (default: 2026-01-01)
+  --help         show this help
+`,
+		},
+		{
+			name: "rows without details stay unpadded",
+			args: []string{"flagcmd", "--help"},
+			wantOut: `Usage:
+  run flagcmd <target> [--force] [--from <from>] [--label <label>]
+
+Arguments:
+  <target>
+
+Options:
+  --force
+  --from <from>  (default: 2026-01-01)
+  --label <label>
+  --help         show this help
+`,
+		},
+		{
+			name: "args only command gets the implicit --help option",
+			args: []string{"deploy", "--help"},
+			wantOut: `Usage:
+  run deploy <env> [region]
+
+Arguments:
+  <env>
+  [region]  (default: us-east-1)
+
+Options:
+  --help  show this help
+`,
+		},
+		{
+			name: "group lists its subcommands",
+			args: []string{"group", "--help"},
+			wantOut: `Usage:
+  run group <command>
+
+Commands:
+  group sub
+`,
+		},
+		{
+			name: "runnable group gets both usage lines",
+			args: []string{"db", "--help"},
+			wantOut: `Usage:
+  run db
+  run db <command>
+
+Options:
+  --help  show this help
+
+Commands:
+  db migrate
+`,
+		},
+		{
+			name: "dynamic defaults are labeled, not executed",
+			args: []string{"dyndefault", "--help"},
+			wantOut: `Usage:
+  run dyndefault [date] [--from <from>]
+
+Arguments:
+  [date]  (default: dynamic)
+
+Options:
+  --from <from>  (default: dynamic)
+  --help         show this help
+`,
+		},
+		{
+			name: "--help anywhere before -- intercepts",
+			args: []string{"echo", "x", "--help"},
+			wantOut: `Usage:
+  run echo
+
+Options:
+  --help  show this help
+`,
+		},
+		{
+			name: "--help wins even as a would-be flag value",
+			args: []string{"flagcmd", "t", "--label", "--help"},
+			wantOut: `Usage:
+  run flagcmd <target> [--force] [--from <from>] [--label <label>]
+
+Arguments:
+  <target>
+
+Options:
+  --force
+  --from <from>  (default: 2026-01-01)
+  --label <label>
+  --help         show this help
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := execCommand(t, tt.args)
+			if err != nil {
+				t.Fatalf("runCommand() error = %v", err)
+			}
+			if out != tt.wantOut {
+				t.Errorf("runCommand() output = %q, want %q", out, tt.wantOut)
+			}
+		})
+	}
+}
+
+// TestRunCommandHelpNeverRunsDynamic verifies that showing help does
+// not evaluate dynamic env values or defaults.
+func TestRunCommandHelpNeverRunsDynamic(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "marker")
+	t.Setenv("MARKER", marker)
+
+	if _, err := execCommand(t, []string{"dynskip", "--help"}); err != nil {
+		t.Fatalf("runCommand() error = %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("dynamic default ran while rendering help (marker stat err = %v)", err)
 	}
 }
 

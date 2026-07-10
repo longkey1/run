@@ -129,9 +129,35 @@ run deploy prod --typo                 # error: unknown flag --typo
 - Every declared flag becomes an environment variable named after it. Bool flags are `true` when passed and `false` otherwise; value options get the given value, their `default`, or the empty string. All flags are optional — there are no required flags.
 - Flags are also re-appended to the positional parameters *after* all positionals, normalized to `--name value` / `--name` in declaration order. `$1..$n` are always the plain arguments, and `"$@"` forwards everything — flags included — to a wrapped command. Defaults materialize there too (like `args:` defaults); a bool that wasn't passed and a value option with no value are omitted.
 - Only long form is supported. Single-dash tokens (`-x`) are always ordinary arguments. A repeated flag: the last one wins. A space-form value is taken literally even if it starts with `--` (use `--name=value` when the value looks like a flag).
-- Unknown `--x` is an error only for commands that declare `flags:`; commands without `flags:` pass everything through untouched. Tokens after `--` are always literal arguments, never flags.
+- Unknown `--x` is an error only for commands that declare `flags:`; commands without `flags:` pass everything through untouched (except `--help` — see [Help](#help)). Tokens after `--` are always literal arguments, never flags.
 - A value option's `default` may also be computed by a shell command — see [Dynamic values](#dynamic-values).
 - `run self list` shows flags after the argument signature: `deploy <env> [--force] [--from <from>]`.
+- Shell completion suggests declared flags with their descriptions: `run deploy --<TAB>` offers `--force`, `--from`, and `--help`. Flags already on the command line are not suggested again, and nothing is suggested in a value position or after `--`.
+
+## Help
+
+`run <command> --help` shows a command's declared help, built from its `description`, `args:`, and `flags:`:
+
+```sh
+$ run deploy --help
+Deploy the app
+
+Usage:
+  run deploy <env> [--force] [--from <from>]
+
+Arguments:
+  <env>  target environment
+
+Options:
+  --force        skip confirmation
+  --from <from>  (default: 2026-01-01)
+  --help         show this help
+```
+
+- A `--help` anywhere before `--` shows help instead of running the command — including for commands without `flags:` that otherwise pass flags through. To forward a literal `--help` to a wrapped command, put it after `--`: `run k -- --help`.
+- A command that declares its own flag named `help` opts out — `--help` is then parsed like any other declared flag.
+- A group command (no `run:`) lists its subcommands.
+- Dynamic defaults are shown as `(default: dynamic)`; help never executes any shell command.
 
 ## Environment variables
 
@@ -183,7 +209,7 @@ run report                # report for 2026-07-10
 run report 2020-01-01     # report for 2020-01-01 (the default's command does not run)
 ```
 
-- Evaluation happens only when a command is executed — never for `run self list` or shell completion — and only for the values that invocation actually uses: an overridden dynamic `env` entry and an unused default are never run.
+- Evaluation happens only when a command is executed — never for `run self list`, `--help`, or shell completion — and only for the values that invocation actually uses: an overridden dynamic `env` entry and an unused default are never run.
 - Dynamic `env` values see the OS environment plus the literal `env` entries; they cannot reference other dynamic `env` values. Defaults are resolved after `env`, so they see all of it — define a shared value like `TODAY` once and reference it from any default.
 - Dynamic values run with `sh -c` in the same directory as the command itself (the directory containing the command file). A non-zero exit aborts the invocation with an error.
 - Bool flags still may not declare a default, dynamic or otherwise.
@@ -232,7 +258,8 @@ All of run's own features live under the single reserved name `self`, so every o
 run self list              # list commands (same as plain `run`)
 run self version           # show version information
 run self completion zsh    # generate shell completion (bash|zsh|fish|powershell)
-run --help                 # show help
+run --help                 # show run's own help
+run <command> --help       # show a command's declared help
 ```
 
 `self` is the only reserved name: a top-level command named `self` is a configuration error. Nested commands may still use the name freely (`run deploy self` works).
