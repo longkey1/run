@@ -10,30 +10,23 @@ import (
 
 	"github.com/longkey1/run/internal/config"
 	"github.com/longkey1/run/internal/runner"
-	"github.com/longkey1/run/internal/version"
 	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "run [flags] [command [subcommand...]]",
+	Use:   "run [command [subcommand...]]",
 	Short: "A CLI runtime driven by YAML command definitions",
 	Long: `run is a CLI runtime: it turns commands defined in YAML files (.run.yaml)
 into a command-line interface and executes them.
 
-Arguments without flags are always command names; run's own features are
-exposed only through flags, so any command name can be used freely.`,
+Bare arguments are always command names, except the single reserved name
+"self", which groups run's own built-in features (run self list, run self
+version, run self completion).`,
 	Args:          cobra.ArbitraryArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if v, _ := cmd.Flags().GetBool("version"); v {
-			fmt.Fprintln(cmd.OutOrStdout(), version.Info())
-			return nil
-		}
-		if shell, _ := cmd.Flags().GetString("completion"); shell != "" {
-			return genCompletion(cmd, shell)
-		}
-		if l, _ := cmd.Flags().GetBool("list"); l || len(args) == 0 {
+		if len(args) == 0 {
 			return runList(cmd)
 		}
 		return runCommand(cmd, args)
@@ -69,16 +62,17 @@ func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]s
 }
 
 func init() {
-	rootCmd.Flags().BoolP("list", "l", false, "List available commands")
-	rootCmd.Flags().Bool("version", false, "Show version information")
-	rootCmd.Flags().String("completion", "", "Generate shell completion script (bash|zsh|fish|powershell)")
 	// Flags must come before the command name; everything after the first
 	// non-flag argument is treated as part of the command path.
 	rootCmd.Flags().SetInterspersed(false)
 	// Disable the default `help` and `completion` subcommands so those
-	// words remain usable as command names.
+	// words remain usable as command names; completion lives under
+	// `run self completion` instead. Once a command has subcommands,
+	// cobra insists on registering a help command and always offers it
+	// in shell completion, so point it at selfCmd: it is already a real
+	// subcommand, and no extra name gets reserved or completed.
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
-	rootCmd.SetHelpCommand(&cobra.Command{Use: "_help", Hidden: true})
+	rootCmd.SetHelpCommand(selfCmd)
 }
 
 func Execute() {

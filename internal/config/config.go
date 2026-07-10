@@ -168,6 +168,12 @@ func (c *Config) Validate() error {
 	if len(c.Commands) == 0 {
 		return fmt.Errorf("no commands defined")
 	}
+	// "self" is the only reserved name: it holds run's own built-in
+	// subcommands (list, version, completion). Nested commands may
+	// still use the name freely.
+	if _, ok := c.Commands["self"]; ok {
+		return fmt.Errorf("command name %q is reserved for run's built-in commands", "self")
+	}
 	if err := validateEnv(c.Env, ""); err != nil {
 		return err
 	}

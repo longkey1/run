@@ -187,6 +187,22 @@ commands:
 			wantErr: true,
 		},
 		{
+			name:    "reserved top-level command name self",
+			content: "commands:\n  self:\n    run: echo self\n",
+			wantErr: true,
+		},
+		{
+			name:    "nested command may be named self",
+			content: "commands:\n  deploy:\n    commands:\n      self:\n        run: ./deploy.sh self\n",
+			want: map[string]Command{
+				"deploy": {
+					Commands: map[string]Command{
+						"self": {Run: "./deploy.sh self"},
+					},
+				},
+			},
+		},
+		{
 			name:    "missing run",
 			content: "commands:\n  build:\n    description: no run\n",
 			wantErr: true,

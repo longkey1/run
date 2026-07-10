@@ -47,7 +47,7 @@ Commands can be nested with `commands:` to form subcommands:
 
 - `run deploy staging` walks the command tree by argument path.
 - A command may define `run`, nested `commands`, or both. With both, `run deploy` runs its own `run` string; without one, `run deploy` lists its subcommands.
-- `run` / `run --list` shows runnable commands flattened with their full path (e.g. `deploy staging`).
+- `run` / `run self list` shows runnable commands flattened with their full path (e.g. `deploy staging`).
 
 ## Arguments
 
@@ -96,7 +96,7 @@ run deploy             # error: command "deploy": missing required argument "env
 - Each declared argument is available both positionally (`$1`, ...) and as an environment variable named after it (`$env`, `$region`). Defaults are applied to both.
 - Arguments beyond the declaration are still passed through (`"$@"` includes them), so declarations and pass-through wrappers compose.
 - Commands without `args:` accept any number of arguments without validation.
-- `--list` shows the signature: `deploy <env> [region]` (`<...>` required, `[...]` has a default).
+- `run self list` shows the signature: `deploy <env> [region]` (`<...>` required, `[...]` has a default).
 
 ## Environment variables
 
@@ -159,19 +159,21 @@ Then `run lint` and `run deploy staging` work as if the commands were defined in
 - An included file's top-level `env:` applies to the commands it defines (and their subcommands), not to other commands in the including file. A command's own `env:` wins over its file's top-level `env:` on conflict.
 - Relative paths resolve against the directory of the including file. Absolute paths are allowed; `~` is not expanded.
 - `includes` can be combined freely with `run` and inline `commands` in the same command.
-- Includes only split up definitions: commands still run in the root command file's directory, and `--list` and shell completion cover included commands like inline ones.
+- Includes only split up definitions: commands still run in the root command file's directory, and `run self list` and shell completion cover included commands like inline ones.
 - Circular includes are detected and reported as an error.
 
-## Built-in flags
+## Built-in commands
 
-All of run's own features are flags, so bare arguments are always command names and there are no reserved command names:
+All of run's own features live under the single reserved name `self`, so every other bare argument is a user-defined command name:
 
 ```sh
-run --list             # list commands (same as plain `run`), also -l
-run --version          # show version information
-run --completion zsh   # generate shell completion (bash|zsh|fish|powershell)
-run --help             # show help
+run self list              # list commands (same as plain `run`)
+run self version           # show version information
+run self completion zsh    # generate shell completion (bash|zsh|fish|powershell)
+run --help                 # show help
 ```
+
+`self` is the only reserved name: a top-level command named `self` is a configuration error. Nested commands may still use the name freely (`run deploy self` works).
 
 Flags must come before the command name; everything after the first non-flag argument is treated as part of the command path.
 
