@@ -26,20 +26,20 @@ func commandHelp(out io.Writer, c config.Command, name string) error {
 	}
 	fmt.Fprintln(out, "Usage:")
 	if c.Run != "" {
-		fmt.Fprintf(out, "  run %s%s%s\n", name, argSignature(c.Args), flagSignature(c.Flags))
+		fmt.Fprintf(out, "  run %s%s%s\n", name, argumentSignature(c.Arguments), optionSignature(c.Options))
 	}
 	if len(c.Commands) > 0 {
 		fmt.Fprintf(out, "  run %s <command>\n", name)
 	}
-	if len(c.Args) > 0 {
+	if len(c.Arguments) > 0 {
 		fmt.Fprintln(out, "\nArguments:")
-		writeHelpRows(out, argHelpRows(c.Args))
+		writeHelpRows(out, argumentHelpRows(c.Arguments))
 	}
-	// Groups cannot declare flags, so an Options section holding only
+	// Groups cannot declare options, so an Options section holding only
 	// --help would be noise there; runnable commands always get one.
 	if c.Run != "" {
 		fmt.Fprintln(out, "\nOptions:")
-		writeHelpRows(out, flagHelpRows(c.Flags))
+		writeHelpRows(out, optionHelpRows(c.Options))
 	}
 	if len(c.Commands) > 0 {
 		fmt.Fprintln(out, "\nCommands:")
@@ -48,10 +48,10 @@ func commandHelp(out io.Writer, c config.Command, name string) error {
 	return nil
 }
 
-// argHelpRows renders one row per declared argument, mirroring the
-// usage signature: <name> for required arguments, [name] for arguments
-// with a default.
-func argHelpRows(args []config.Arg) []helpRow {
+// argumentHelpRows renders one row per declared argument, mirroring
+// the usage signature: <name> for required arguments, [name] for
+// arguments with a default.
+func argumentHelpRows(args []config.Argument) []helpRow {
 	rows := make([]helpRow, 0, len(args))
 	for _, a := range args {
 		label := "<" + a.Name + ">"
@@ -63,19 +63,19 @@ func argHelpRows(args []config.Arg) []helpRow {
 	return rows
 }
 
-// flagHelpRows renders one row per declared flag, plus a trailing
-// --help entry unless the command declares a flag named help itself
+// optionHelpRows renders one row per declared option, plus a trailing
+// --help entry unless the command declares an option named help itself
 // (that declaration also disables --help interception).
-func flagHelpRows(flags []config.Flag) []helpRow {
-	rows := make([]helpRow, 0, len(flags)+1)
-	for _, f := range flags {
-		label := "--" + f.Name
-		if !f.IsBool() {
-			label += " <" + f.Name + ">"
+func optionHelpRows(options []config.Option) []helpRow {
+	rows := make([]helpRow, 0, len(options)+1)
+	for _, o := range options {
+		label := "--" + o.Name
+		if !o.IsBool() {
+			label += " <" + o.Name + ">"
 		}
-		rows = append(rows, helpRow{label, detailText(f.Description, f.Default)})
+		rows = append(rows, helpRow{label, detailText(o.Description, o.Default)})
 	}
-	if !hasFlag(flags, "help") {
+	if !hasOption(options, "help") {
 		rows = append(rows, helpRow{"--help", "show this help"})
 	}
 	return rows
@@ -126,15 +126,15 @@ func defaultLabel(d *config.Value) string {
 	}
 }
 
-// declaresFlag reports whether the command declares a flag with the
-// given name.
-func declaresFlag(c config.Command, name string) bool {
-	return hasFlag(c.Flags, name)
+// declaresOption reports whether the command declares an option with
+// the given name.
+func declaresOption(c config.Command, name string) bool {
+	return hasOption(c.Options, name)
 }
 
-func hasFlag(flags []config.Flag, name string) bool {
-	for _, f := range flags {
-		if f.Name == name {
+func hasOption(options []config.Option, name string) bool {
+	for _, o := range options {
+		if o.Name == name {
 			return true
 		}
 	}

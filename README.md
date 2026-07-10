@@ -1,6 +1,6 @@
 # run
 
-A CLI runtime: define commands in YAML, and `run` turns them into a command-line interface with subcommands, arguments, flags, environment variables, and shell completion.
+A CLI runtime: define commands in YAML, and `run` turns them into a command-line interface with subcommands, arguments, options, environment variables, and shell completion.
 
 ## Installation
 
@@ -72,13 +72,13 @@ run k get pods         # kubectl get pods ("$@" passes everything through)
 
 ### Declared arguments
 
-A command can declare its arguments with `args:` to require them, give them defaults, and reference them by name:
+A command can declare its arguments with `arguments:` to require them, give them defaults, and reference them by name:
 
 ```yaml
 commands:
   deploy:
     description: Deploy the app
-    args:
+    arguments:
       - name: env
         description: target environment
       - name: region
@@ -92,24 +92,24 @@ run deploy prod        # ./deploy.sh prod us-east-1 (default applied)
 run deploy             # error: command "deploy": missing required argument "env"
 ```
 
-- CLI arguments map to declared args in order. Missing trailing arguments fall back to their `default`; a missing argument without a default is an error.
+- CLI arguments map to declared arguments in order. Missing trailing arguments fall back to their `default`; a missing argument without a default is an error.
 - Each declared argument is available both positionally (`$1`, ...) and as an environment variable named after it (`$env`, `$region`). Defaults are applied to both.
 - Arguments beyond the declaration are still passed through (`"$@"` includes them), so declarations and pass-through wrappers compose.
-- Commands without `args:` accept any number of arguments without validation.
+- Commands without `arguments:` accept any number of arguments without validation.
 - A `default` may also be computed by a shell command — see [Dynamic values](#dynamic-values).
 - `run self list` shows the signature: `deploy <env> [region]` (`<...>` required, `[...]` has a default).
 
-### Declared flags
+### Declared options
 
-A command can declare long-form flags with `flags:` — boolean flags (`type: bool`) and value options (the default):
+A command can declare long-form options with `options:` — boolean options (`type: bool`) and value options (the default):
 
 ```yaml
 commands:
   deploy:
     description: Deploy the app
-    args:
+    arguments:
       - name: env
-    flags:
+    options:
       - name: force
         type: bool
         description: skip confirmation
@@ -120,23 +120,23 @@ commands:
 
 ```sh
 run deploy prod --force                # $force=true
-run deploy --force prod                # flags and arguments may be interleaved
+run deploy --force prod                # options and arguments may be interleaved
 run deploy prod --from 2026-04-01      # $from=2026-04-01
 run deploy prod --from=2026-04-01      # equals form works too
-run deploy prod --typo                 # error: unknown flag --typo
+run deploy prod --typo                 # error: unknown option --typo
 ```
 
-- Every declared flag becomes an environment variable named after it. Bool flags are `true` when passed and `false` otherwise; value options get the given value, their `default`, or the empty string. All flags are optional — there are no required flags.
-- Flags are also re-appended to the positional parameters *after* all positionals, normalized to `--name value` / `--name` in declaration order. `$1..$n` are always the plain arguments, and `"$@"` forwards everything — flags included — to a wrapped command. Defaults materialize there too (like `args:` defaults); a bool that wasn't passed and a value option with no value are omitted.
-- Only long form is supported. Single-dash tokens (`-x`) are always ordinary arguments. A repeated flag: the last one wins. A space-form value is taken literally even if it starts with `--` (use `--name=value` when the value looks like a flag).
-- Unknown `--x` is an error only for commands that declare `flags:`; commands without `flags:` pass everything through untouched (except `--help` — see [Help](#help)). Tokens after `--` are always literal arguments, never flags.
+- Every declared option becomes an environment variable named after it. Bool options are `true` when passed and `false` otherwise; value options get the given value, their `default`, or the empty string. All options are optional — there are no required options.
+- Options are also re-appended to the positional parameters *after* all positionals, normalized to `--name value` / `--name` in declaration order. `$1..$n` are always the plain arguments, and `"$@"` forwards everything — options included — to a wrapped command. Defaults materialize there too (like `arguments:` defaults); a bool that wasn't passed and a value option with no value are omitted.
+- Only long form is supported. Single-dash tokens (`-x`) are always ordinary arguments. A repeated option: the last one wins. A space-form value is taken literally even if it starts with `--` (use `--name=value` when the value looks like an option).
+- Unknown `--x` is an error only for commands that declare `options:`; commands without `options:` pass everything through untouched (except `--help` — see [Help](#help)). Tokens after `--` are always literal arguments, never options.
 - A value option's `default` may also be computed by a shell command — see [Dynamic values](#dynamic-values).
-- `run self list` shows flags after the argument signature: `deploy <env> [--force] [--from <from>]`.
-- Shell completion suggests declared flags with their descriptions: `run deploy --<TAB>` offers `--force`, `--from`, and `--help`. Flags already on the command line are not suggested again, and nothing is suggested in a value position or after `--`.
+- `run self list` shows options after the argument signature: `deploy <env> [--force] [--from <from>]`.
+- Shell completion suggests declared options with their descriptions: `run deploy --<TAB>` offers `--force`, `--from`, and `--help`. Options already on the command line are not suggested again, and nothing is suggested in a value position or after `--`.
 
 ## Help
 
-`run <command> --help` shows a command's declared help, built from its `description`, `args:`, and `flags:`:
+`run <command> --help` shows a command's declared help, built from its `description`, `arguments:`, and `options:`:
 
 ```sh
 $ run deploy --help
@@ -154,8 +154,8 @@ Options:
   --help         show this help
 ```
 
-- A `--help` anywhere before `--` shows help instead of running the command — including for commands without `flags:` that otherwise pass flags through. To forward a literal `--help` to a wrapped command, put it after `--`: `run k -- --help`.
-- A command that declares its own flag named `help` opts out — `--help` is then parsed like any other declared flag.
+- A `--help` anywhere before `--` shows help instead of running the command — including for commands without `options:` that otherwise pass options through. To forward a literal `--help` to a wrapped command, put it after `--`: `run k -- --help`.
+- A command that declares its own option named `help` opts out — `--help` is then parsed like any other declared option.
 - A group command (no `run:`) lists its subcommands.
 - Dynamic defaults are shown as `(default: dynamic)`; help never executes any shell command.
 
@@ -184,12 +184,12 @@ commands:
 `run build` sees `APP_ENV=development`, `run deploy production` sees `APP_ENV=production`, and `run deploy staging` sees `APP_ENV=staging`.
 
 - Top-level `env:` applies to every command in the file; a command's `env:` applies to the command and its subcommands.
-- Precedence (lowest to highest): inherited OS environment < top-level `env` < ancestor command `env` (outer to inner) < the resolved command's `env` < declared-argument and declared-flag variables.
+- Precedence (lowest to highest): inherited OS environment < top-level `env` < ancestor command `env` (outer to inner) < the resolved command's `env` < declared-argument and declared-option variables.
 - Values are literal strings — `run` performs no `$VAR`/`${VAR}` expansion in them. Variable references written in `run:` are still expanded by the shell at execution time, so `run: echo "$APP_ENV"` works as expected. To compute a value with a shell command, use the explicit `{run: ...}` form — see [Dynamic values](#dynamic-values).
 
 ## Dynamic values
 
-`env:` values and `args:`/`flags:` defaults are literal strings by default. The mapping form `{run: ...}` opts a single value into dynamic evaluation: the shell command's stdout (with trailing newlines trimmed, like `$(...)` substitution) becomes the value.
+`env:` values and `arguments:`/`options:` defaults are literal strings by default. The mapping form `{run: ...}` opts a single value into dynamic evaluation: the shell command's stdout (with trailing newlines trimmed, like `$(...)` substitution) becomes the value.
 
 ```yaml
 env:
@@ -197,7 +197,7 @@ env:
     run: date +%F              # computed once per invocation
 commands:
   report:
-    args:
+    arguments:
       - name: date
         default:
           run: echo "$TODAY"   # defaults can reference resolved env values
@@ -212,7 +212,7 @@ run report 2020-01-01     # report for 2020-01-01 (the default's command does no
 - Evaluation happens only when a command is executed — never for `run self list`, `--help`, or shell completion — and only for the values that invocation actually uses: an overridden dynamic `env` entry and an unused default are never run.
 - Dynamic `env` values see the OS environment plus the literal `env` entries; they cannot reference other dynamic `env` values. Defaults are resolved after `env`, so they see all of it — define a shared value like `TODAY` once and reference it from any default.
 - Dynamic values run with the same shell as the command itself (`sh -c` unless overridden via `shell:` — see [Shell](#shell)) in the same directory (the directory containing the command file). A non-zero exit aborts the invocation with an error.
-- Bool flags still may not declare a default, dynamic or otherwise.
+- Bool options still may not declare a default, dynamic or otherwise.
 
 ## Includes
 

@@ -41,7 +41,7 @@ func writeCommands(w io.Writer, cmds map[string]config.Command, prefix string) {
 			full = prefix + " " + name
 		}
 		if c.Run != "" {
-			label := full + argSignature(c.Args) + flagSignature(c.Flags)
+			label := full + argumentSignature(c.Arguments) + optionSignature(c.Options)
 			if c.Description == "" {
 				fmt.Fprintf(w, "  %s\n", label)
 			} else {
@@ -52,9 +52,9 @@ func writeCommands(w io.Writer, cmds map[string]config.Command, prefix string) {
 	}
 }
 
-// argSignature renders declared args as " <name>" for required
-// arguments and " [name]" for arguments with a default.
-func argSignature(args []config.Arg) string {
+// argumentSignature renders declared arguments as " <name>" for
+// required arguments and " [name]" for arguments with a default.
+func argumentSignature(args []config.Argument) string {
 	var b strings.Builder
 	for _, a := range args {
 		if a.Default != nil {
@@ -66,16 +66,16 @@ func argSignature(args []config.Arg) string {
 	return b.String()
 }
 
-// flagSignature renders declared flags after the argument signature.
-// All flags are optional, so every entry is bracketed: " [--name]" for
-// bool flags, " [--name <name>]" for value options.
-func flagSignature(flags []config.Flag) string {
+// optionSignature renders declared options after the argument
+// signature. All options are optional, so every entry is bracketed:
+// " [--name]" for bool options, " [--name <name>]" for value options.
+func optionSignature(options []config.Option) string {
 	var b strings.Builder
-	for _, f := range flags {
-		if f.IsBool() {
-			fmt.Fprintf(&b, " [--%s]", f.Name)
+	for _, o := range options {
+		if o.IsBool() {
+			fmt.Fprintf(&b, " [--%s]", o.Name)
 		} else {
-			fmt.Fprintf(&b, " [--%s <%s>]", f.Name, f.Name)
+			fmt.Fprintf(&b, " [--%s <%s>]", o.Name, o.Name)
 		}
 	}
 	return b.String()

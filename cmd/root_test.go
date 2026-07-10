@@ -38,17 +38,17 @@ commands:
   envarg:
     env:
       target: from-env
-    args:
+    arguments:
       - name: target
     run: echo "$target"
   deploy:
-    args:
+    arguments:
       - name: env
       - name: region
         default: us-east-1
     run: echo "$env/$region $1/$2"
   wrap:
-    args:
+    arguments:
       - name: first
     run: printf '%s\n' "$@"
   db:
@@ -60,12 +60,12 @@ commands:
     commands:
       sub:
         run: echo sub
-  flagcmd:
+  optcmd:
     env:
       from: from-env
-    args:
+    arguments:
       - name: target
-    flags:
+    options:
       - name: force
         type: bool
       - name: from
@@ -83,17 +83,17 @@ commands:
     env:
       TODAY:
         run: printf 2026-07-10
-    args:
+    arguments:
       - name: date
         default:
           run: printf '%s' "$TODAY"
-    flags:
+    options:
       - name: from
         default:
           run: printf f-default
     run: printf '%s\n' "date=$date from=$from" "$@"
   dynskip:
-    args:
+    arguments:
       - name: v
         default:
           run: 'echo ran > "$MARKER"; printf d'
@@ -104,7 +104,7 @@ commands:
         run: exit 3
     run: echo unreachable
   dynfaildefault:
-    args:
+    arguments:
       - name: v
         default:
           run: exit 2
@@ -120,18 +120,18 @@ commands:
         run: echo "$X"
   described:
     description: Deploy the app
-    args:
+    arguments:
       - name: env
         description: target environment
-    flags:
+    options:
       - name: force
         type: bool
         description: skip confirmation
       - name: from
         default: "2026-01-01"
     run: echo x
-  helpflag:
-    flags:
+  helpopt:
+    options:
       - name: help
         type: bool
     run: printf '%s\n' "help=$help" "$@"
@@ -171,7 +171,7 @@ func TestRunCommand(t *testing.T) {
 		wantErr string // substring; empty means success
 	}{
 		{
-			name:    "args pass through via $@",
+			name:    "arguments pass through via $@",
 			args:    []string{"echo", "a", "b c"},
 			wantOut: "a\nb c\n",
 		},
@@ -206,7 +206,7 @@ func TestRunCommand(t *testing.T) {
 			wantErr: `missing required argument "env"`,
 		},
 		{
-			name:    "extra args beyond declaration pass through",
+			name:    "extra arguments beyond declaration pass through",
 			args:    []string{"wrap", "a", "b"},
 			wantOut: "a\nb\n",
 		},
@@ -246,82 +246,82 @@ func TestRunCommand(t *testing.T) {
 			wantOut: "hello inner g\n",
 		},
 		{
-			name:    "declared arg overrides command env",
+			name:    "declared argument overrides command env",
 			args:    []string{"envarg", "cli"},
 			wantOut: "cli\n",
 		},
 		{
-			name:    "bool flag set and normalized after positionals",
-			args:    []string{"flagcmd", "t", "--force"},
+			name:    "bool option set and normalized after positionals",
+			args:    []string{"optcmd", "t", "--force"},
 			wantOut: "force=true from=2026-01-01 label=\nt\n--force\n--from\n2026-01-01\n",
 		},
 		{
-			name:    "bool flag unset and flag default overrides command env",
-			args:    []string{"flagcmd", "t"},
+			name:    "bool option unset and option default overrides command env",
+			args:    []string{"optcmd", "t"},
 			wantOut: "force=false from=2026-01-01 label=\nt\n--from\n2026-01-01\n",
 		},
 		{
-			name:    "value flag space form",
-			args:    []string{"flagcmd", "t", "--from", "2026-04-01"},
+			name:    "value option space form",
+			args:    []string{"optcmd", "t", "--from", "2026-04-01"},
 			wantOut: "force=false from=2026-04-01 label=\nt\n--from\n2026-04-01\n",
 		},
 		{
-			name:    "value flag equals form",
-			args:    []string{"flagcmd", "t", "--from=2026-04-01"},
+			name:    "value option equals form",
+			args:    []string{"optcmd", "t", "--from=2026-04-01"},
 			wantOut: "force=false from=2026-04-01 label=\nt\n--from\n2026-04-01\n",
 		},
 		{
-			name:    "flag before positional keeps $1 stable",
-			args:    []string{"flagcmd", "--force", "t"},
+			name:    "option before positional keeps $1 stable",
+			args:    []string{"optcmd", "--force", "t"},
 			wantOut: "force=true from=2026-01-01 label=\nt\n--force\n--from\n2026-01-01\n",
 		},
 		{
-			name:    "unknown flag",
-			args:    []string{"flagcmd", "t", "--bogus"},
-			wantErr: `unknown flag --bogus`,
+			name:    "unknown option",
+			args:    []string{"optcmd", "t", "--bogus"},
+			wantErr: `unknown option --bogus`,
 		},
 		{
-			name:    "bool flag rejects a value",
-			args:    []string{"flagcmd", "t", "--force=yes"},
-			wantErr: `flag --force does not take a value`,
+			name:    "bool option rejects a value",
+			args:    []string{"optcmd", "t", "--force=yes"},
+			wantErr: `option --force does not take a value`,
 		},
 		{
-			name:    "value flag missing value",
-			args:    []string{"flagcmd", "t", "--from"},
-			wantErr: `flag --from requires a value`,
+			name:    "value option missing value",
+			args:    []string{"optcmd", "t", "--from"},
+			wantErr: `option --from requires a value`,
 		},
 		{
-			name:    "repeated flag last wins",
-			args:    []string{"flagcmd", "t", "--from", "a", "--from", "b"},
+			name:    "repeated option last wins",
+			args:    []string{"optcmd", "t", "--from", "a", "--from", "b"},
 			wantOut: "force=false from=b label=\nt\n--from\nb\n",
 		},
 		{
 			name:    "space form value taken literally",
-			args:    []string{"flagcmd", "t", "--label", "--force"},
+			args:    []string{"optcmd", "t", "--label", "--force"},
 			wantOut: "force=false from=2026-01-01 label=--force\nt\n--from\n2026-01-01\n--label\n--force\n",
 		},
 		{
 			name:    "single dash token is positional",
-			args:    []string{"flagcmd", "-x"},
+			args:    []string{"optcmd", "-x"},
 			wantOut: "force=false from=2026-01-01 label=\n-x\n--from\n2026-01-01\n",
 		},
 		{
-			name:    "tokens after -- are literal even for flag command",
-			args:    []string{"flagcmd", "--force", "--", "--bogus"},
+			name:    "tokens after -- are literal even for option command",
+			args:    []string{"optcmd", "--force", "--", "--bogus"},
 			wantOut: "force=true from=2026-01-01 label=\n--bogus\n--force\n--from\n2026-01-01\n",
 		},
 		{
-			name:    "bare token before -- still errors on flag command",
-			args:    []string{"flagcmd", "x", "--force", "--", "y"},
-			wantErr: `command "flagcmd" has no subcommand "x"`,
+			name:    "bare token before -- still errors on option command",
+			args:    []string{"optcmd", "x", "--force", "--", "y"},
+			wantErr: `command "optcmd" has no subcommand "x"`,
 		},
 		{
-			name:    "missing required arg with only flags",
-			args:    []string{"flagcmd", "--force"},
+			name:    "missing required arg with only options",
+			args:    []string{"optcmd", "--force"},
 			wantErr: `missing required argument "target"`,
 		},
 		{
-			name:    "command without flags passes --tokens through",
+			name:    "command without options passes --tokens through",
 			args:    []string{"echo", "--whatever", "-x"},
 			wantOut: "--whatever\n-x\n",
 		},
@@ -366,8 +366,8 @@ func TestRunCommand(t *testing.T) {
 			wantOut: "-h\n",
 		},
 		{
-			name:    "declared help flag disables interception",
-			args:    []string{"helpflag", "--help"},
+			name:    "declared help option disables interception",
+			args:    []string{"helpopt", "--help"},
 			wantOut: "help=true\n--help\n",
 		},
 	}
@@ -416,9 +416,9 @@ Options:
 		},
 		{
 			name: "rows without details stay unpadded",
-			args: []string{"flagcmd", "--help"},
+			args: []string{"optcmd", "--help"},
 			wantOut: `Usage:
-  run flagcmd <target> [--force] [--from <from>] [--label <label>]
+  run optcmd <target> [--force] [--from <from>] [--label <label>]
 
 Arguments:
   <target>
@@ -431,7 +431,7 @@ Options:
 `,
 		},
 		{
-			name: "args only command gets the implicit --help option",
+			name: "arguments only command gets the implicit --help option",
 			args: []string{"deploy", "--help"},
 			wantOut: `Usage:
   run deploy <env> [region]
@@ -493,10 +493,10 @@ Options:
 `,
 		},
 		{
-			name: "--help wins even as a would-be flag value",
-			args: []string{"flagcmd", "t", "--label", "--help"},
+			name: "--help wins even as a would-be option value",
+			args: []string{"optcmd", "t", "--label", "--help"},
 			wantOut: `Usage:
-  run flagcmd <target> [--force] [--from <from>] [--label <label>]
+  run optcmd <target> [--force] [--from <from>] [--label <label>]
 
 Arguments:
   <target>
@@ -597,7 +597,7 @@ commands:
     env:
       V:
         run: printf "dyn-$FAKESHELL"
-    args:
+    arguments:
       - name: a
         default:
           run: printf "def-$FAKESHELL"

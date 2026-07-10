@@ -53,8 +53,8 @@ func TestSelfList(t *testing.T) {
 	if !strings.Contains(out, "deploy <env> [region]") {
 		t.Errorf("Execute() output = %q, want command list", out)
 	}
-	if !strings.Contains(out, "flagcmd <target> [--force] [--from <from>] [--label <label>]") {
-		t.Errorf("Execute() output = %q, want flag signature", out)
+	if !strings.Contains(out, "optcmd <target> [--force] [--from <from>] [--label <label>]") {
+		t.Errorf("Execute() output = %q, want option signature", out)
 	}
 }
 

@@ -25,7 +25,7 @@ Bare arguments are always command names, except the single reserved name
 "self", which groups run's own built-in features (run self list, run self
 version, run self completion).
 
-"run <command> --help" shows a command's declared arguments and flags;
+"run <command> --help" shows a command's declared arguments and options;
 use "run <command> -- --help" to pass a literal --help through instead.`,
 	Args:          cobra.ArbitraryArgs,
 	SilenceUsage:  true,
@@ -46,8 +46,8 @@ use "run <command> -- --help" to pass a literal --help through instead.`,
 // path through nested commands, mirroring runCommand's greedy
 // resolution: while still on the path it completes the next level's
 // command names; past it, a word starting with "-" completes the
-// resolved command's declared flags. Tokens after a literal "--",
-// flag-value positions, and positional positions get no candidates,
+// resolved command's declared options. Tokens after a literal "--",
+// option-value positions, and positional positions get no candidates,
 // and nothing ever falls back to file completion.
 func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	sources, err := loadSources()
@@ -70,10 +70,10 @@ func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]s
 		cmds = c.Commands
 		n++
 	}
-	rest := args[n:] // already-typed flags/positionals, never path segments
-	// The word being completed is a value flag's pending value, which
-	// runCommand takes literally even if it looks like a flag.
-	if awaitingFlagValue(command, rest) {
+	rest := args[n:] // already-typed options/positionals, never path segments
+	// The word being completed is a value option's pending value, which
+	// runCommand takes literally even if it looks like an option.
+	if awaitingOptionValue(command, rest) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	if strings.HasPrefix(toComplete, "-") {
@@ -82,7 +82,7 @@ func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]s
 			// part of --name=: nothing to suggest.
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		return completeFlags(command, rest, toComplete), cobra.ShellCompDirectiveNoFileComp
+		return completeOptions(command, rest, toComplete), cobra.ShellCompDirectiveNoFileComp
 	}
 	if n < len(args) {
 		// Past the path: this is a positional position.
@@ -98,10 +98,10 @@ func completeCommands(cmd *cobra.Command, args []string, toComplete string) ([]s
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
-// awaitingFlagValue reports whether the word being completed is the
-// pending value of a declared value flag (space form "--name" as the
+// awaitingOptionValue reports whether the word being completed is the
+// pending value of a declared value option (space form "--name" as the
 // last typed token).
-func awaitingFlagValue(c config.Command, rest []string) bool {
+func awaitingOptionValue(c config.Command, rest []string) bool {
 	if len(rest) == 0 {
 		return false
 	}
@@ -109,20 +109,21 @@ func awaitingFlagValue(c config.Command, rest []string) bool {
 	if !strings.HasPrefix(last, "--") || strings.Contains(last, "=") {
 		return false
 	}
-	for _, f := range c.Flags {
-		if f.Name == last[2:] {
-			return !f.IsBool()
+	for _, o := range c.Options {
+		if o.Name == last[2:] {
+			return !o.IsBool()
 		}
 	}
 	return false
 }
 
-// completeFlags returns the command's declared flags matching the
-// typed prefix, in declaration order, with descriptions. Flags already
-// present among the typed tokens are skipped (repeats are legal but
-// last-wins, so re-suggesting them is pointless). A --help entry is
-// appended unless the command declares a flag named help itself.
-func completeFlags(c config.Command, rest []string, toComplete string) []string {
+// completeOptions returns the command's declared options matching the
+// typed prefix, in declaration order, with descriptions. Options
+// already present among the typed tokens are skipped (repeats are
+// legal but last-wins, so re-suggesting them is pointless). A --help
+// entry is appended unless the command declares an option named help
+// itself.
+func completeOptions(c config.Command, rest []string, toComplete string) []string {
 	used := func(name string) bool {
 		for _, tok := range rest {
 			if tok == "--"+name || strings.HasPrefix(tok, "--"+name+"=") {
@@ -131,21 +132,21 @@ func completeFlags(c config.Command, rest []string, toComplete string) []string 
 		}
 		return false
 	}
-	var flags []string
-	for _, f := range c.Flags {
-		candidate := "--" + f.Name
-		if !strings.HasPrefix(candidate, toComplete) || used(f.Name) {
+	var options []string
+	for _, o := range c.Options {
+		candidate := "--" + o.Name
+		if !strings.HasPrefix(candidate, toComplete) || used(o.Name) {
 			continue
 		}
-		if f.Description != "" {
-			candidate += "\t" + f.Description
+		if o.Description != "" {
+			candidate += "\t" + o.Description
 		}
-		flags = append(flags, candidate)
+		options = append(options, candidate)
 	}
-	if strings.HasPrefix("--help", toComplete) && !declaresFlag(c, "help") {
-		flags = append(flags, "--help\tshow this help")
+	if strings.HasPrefix("--help", toComplete) && !declaresOption(c, "help") {
+		options = append(options, "--help\tshow this help")
 	}
-	return flags
+	return options
 }
 
 func init() {
@@ -229,7 +230,7 @@ func mergedCommands(sources []source) map[string]config.Command {
 // Arguments stop being command path segments at the first "--", or at
 // the first name that doesn't match a subcommand of a runnable command;
 // the remainder is passed to the run string as positional parameters,
-// after declared flags are extracted from the pre-"--" portion. A
+// after declared options are extracted from the pre-"--" portion. A
 // --help among the pre-"--" remainder shows the command's declared
 // help instead.
 func runCommand(cmd *cobra.Command, args []string) error {
@@ -240,7 +241,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 
 	// SetInterspersed(false) leaves a "--" after the command name in args,
 	// so split it off here rather than via ArgsLenAtDash. Tokens after
-	// the first "--" are always literal positionals, never flags.
+	// the first "--" are always literal positionals, never options.
 	path := args
 	var literal []string
 	explicit := false
@@ -296,9 +297,9 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	rest := path[n:] // tokens after the resolved path, before any "--"
 	// A --help anywhere before "--" shows the command's declared help
 	// instead of running it — checked before resolveEnv so help never
-	// evaluates dynamic values. A declared flag named "help" opts the
+	// evaluates dynamic values. A declared option named "help" opts the
 	// command out; "run cmd -- --help" passes a literal --help through.
-	if slices.Contains(rest, "--help") && !declaresFlag(command, "help") {
+	if slices.Contains(rest, "--help") && !declaresOption(command, "help") {
 		return commandHelp(cmd.OutOrStdout(), command, name)
 	}
 	if len(rest) > 0 && command.Run == "" {
@@ -325,39 +326,40 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return runner.Capture(shell, v.Run, workDir, envList(env), cmd.ErrOrStderr())
 	}
 
-	positional, flagArgs, flagEnv, err := applyFlags(command, name, rest, resolve)
+	positional, optionArgs, optionEnv, err := applyOptions(command, name, rest, resolve)
 	if err != nil {
 		return err
 	}
 	// With an explicit "--", everything before it must be command path
-	// or declared flags.
+	// or declared options.
 	if explicit && len(positional) > 0 {
 		return fmt.Errorf("command %q has no subcommand %q", name, positional[0])
 	}
-	// slices.Concat, not append: in the no-flags passthrough case
+	// slices.Concat, not append: in the no-options passthrough case
 	// positional aliases the args backing array, which literal follows.
-	cmdArgs, argEnv, err := applyArgs(command, name, slices.Concat(positional, literal), resolve)
+	cmdArgs, argEnv, err := applyArguments(command, name, slices.Concat(positional, literal), resolve)
 	if err != nil {
 		return err
 	}
-	cmdArgs = append(cmdArgs, flagArgs...)
-	maps.Copy(env, flagEnv)
-	maps.Copy(env, argEnv) // declared args and flags have the highest precedence
+	cmdArgs = append(cmdArgs, optionArgs...)
+	maps.Copy(env, optionEnv)
+	maps.Copy(env, argEnv) // declared arguments and options have the highest precedence
 	return runner.Run(shell, command.Run, workDir, cmdArgs, envList(env), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
-// applyArgs validates CLI arguments against the command's declared
-// args, fills in defaults for missing trailing arguments, and builds an
-// environment variable for each declared argument. Arguments beyond
-// the declaration are passed through untouched. Defaults resolve
-// lazily — a dynamic default only runs when it is actually used.
-func applyArgs(command config.Command, name string, args []string, resolve func(config.Value) (string, error)) ([]string, map[string]string, error) {
-	if len(command.Args) == 0 {
+// applyArguments validates CLI arguments against the command's
+// declared arguments, fills in defaults for missing trailing
+// arguments, and builds an environment variable for each declared
+// argument. Arguments beyond the declaration are passed through
+// untouched. Defaults resolve lazily — a dynamic default only runs
+// when it is actually used.
+func applyArguments(command config.Command, name string, args []string, resolve func(config.Value) (string, error)) ([]string, map[string]string, error) {
+	if len(command.Arguments) == 0 {
 		return args, nil, nil
 	}
 	final := slices.Clone(args)
-	env := make(map[string]string, len(command.Args))
-	for i, decl := range command.Args {
+	env := make(map[string]string, len(command.Arguments))
+	for i, decl := range command.Arguments {
 		var value string
 		switch {
 		case i < len(args):
@@ -377,25 +379,25 @@ func applyArgs(command config.Command, name string, args []string, resolve func(
 	return final, env, nil
 }
 
-// applyFlags extracts declared long-form flags (--name, --name=value,
-// --name value) from args, leaving everything else as positionals. It
-// returns the positionals, the recognized flags re-normalized as
-// "--name value"/"--name" tokens in declaration order (appended after
-// all positionals so $1..$n stay stable and "$@" forwards everything),
-// and an environment variable per declared flag: bools are
-// "true"/"false", value options get the given value, their default, or
-// "". Value options that are unset and have no default are omitted
-// from the normalized tokens. Repeated flags: the last one wins.
-// Commands without a flags declaration are passed through untouched.
-// Defaults resolve lazily — a dynamic default only runs when it is
-// actually used.
-func applyFlags(command config.Command, name string, args []string, resolve func(config.Value) (string, error)) (positional, flagArgs []string, env map[string]string, err error) {
-	if len(command.Flags) == 0 {
+// applyOptions extracts declared long-form options (--name,
+// --name=value, --name value) from args, leaving everything else as
+// positionals. It returns the positionals, the recognized options
+// re-normalized as "--name value"/"--name" tokens in declaration order
+// (appended after all positionals so $1..$n stay stable and "$@"
+// forwards everything), and an environment variable per declared
+// option: bools are "true"/"false", value options get the given value,
+// their default, or "". Value options that are unset and have no
+// default are omitted from the normalized tokens. Repeated options:
+// the last one wins. Commands without an options declaration are
+// passed through untouched. Defaults resolve lazily — a dynamic
+// default only runs when it is actually used.
+func applyOptions(command config.Command, name string, args []string, resolve func(config.Value) (string, error)) (positional, optionArgs []string, env map[string]string, err error) {
+	if len(command.Options) == 0 {
 		return args, nil, nil, nil
 	}
-	decls := make(map[string]config.Flag, len(command.Flags))
-	for _, f := range command.Flags {
-		decls[f.Name] = f
+	decls := make(map[string]config.Option, len(command.Options))
+	for _, o := range command.Options {
+		decls[o.Name] = o
 	}
 	bools := make(map[string]bool)
 	values := make(map[string]string)
@@ -405,35 +407,35 @@ func applyFlags(command config.Command, name string, args []string, resolve func
 			positional = append(positional, tok)
 			continue
 		}
-		flagName, value, hasValue := strings.Cut(tok[2:], "=")
-		decl, ok := decls[flagName]
+		optName, value, hasValue := strings.Cut(tok[2:], "=")
+		decl, ok := decls[optName]
 		if !ok {
-			return nil, nil, nil, fmt.Errorf("command %q: unknown flag --%s", name, flagName)
+			return nil, nil, nil, fmt.Errorf("command %q: unknown option --%s", name, optName)
 		}
 		if decl.IsBool() {
 			if hasValue {
-				return nil, nil, nil, fmt.Errorf("command %q: flag --%s does not take a value", name, flagName)
+				return nil, nil, nil, fmt.Errorf("command %q: option --%s does not take a value", name, optName)
 			}
-			bools[flagName] = true
+			bools[optName] = true
 			continue
 		}
 		if !hasValue {
 			i++
 			if i >= len(args) {
-				return nil, nil, nil, fmt.Errorf("command %q: flag --%s requires a value", name, flagName)
+				return nil, nil, nil, fmt.Errorf("command %q: option --%s requires a value", name, optName)
 			}
-			value = args[i] // taken literally, even if it looks like a flag
+			value = args[i] // taken literally, even if it looks like an option
 		}
-		values[flagName] = value
+		values[optName] = value
 	}
 
-	env = make(map[string]string, len(command.Flags))
-	for _, decl := range command.Flags {
+	env = make(map[string]string, len(command.Options))
+	for _, decl := range command.Options {
 		if decl.IsBool() {
 			set := bools[decl.Name]
 			env[decl.Name] = strconv.FormatBool(set)
 			if set {
-				flagArgs = append(flagArgs, "--"+decl.Name)
+				optionArgs = append(optionArgs, "--"+decl.Name)
 			}
 			continue
 		}
@@ -445,14 +447,14 @@ func applyFlags(command config.Command, name string, args []string, resolve func
 			}
 			v, rerr := resolve(*decl.Default)
 			if rerr != nil {
-				return nil, nil, nil, fmt.Errorf("command %q: default for flag --%s: %w", name, decl.Name, rerr)
+				return nil, nil, nil, fmt.Errorf("command %q: default for option --%s: %w", name, decl.Name, rerr)
 			}
-			value = v // defaults materialize into "$@" like args defaults
+			value = v // defaults materialize into "$@" like argument defaults
 		}
 		env[decl.Name] = value
-		flagArgs = append(flagArgs, "--"+decl.Name, value)
+		optionArgs = append(optionArgs, "--"+decl.Name, value)
 	}
-	return positional, flagArgs, env, nil
+	return positional, optionArgs, env, nil
 }
 
 // resolveEnv converts the merged env declarations to concrete strings,

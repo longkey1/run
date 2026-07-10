@@ -111,12 +111,12 @@ commands:
 			},
 		},
 		{
-			name: "command with args",
+			name: "command with arguments",
 			content: `
 commands:
   deploy:
     run: ./deploy.sh "$env" "$region"
-    args:
+    arguments:
       - name: env
         description: target environment
       - name: region
@@ -127,7 +127,7 @@ commands:
 			want: map[string]Command{
 				"deploy": {
 					Run: `./deploy.sh "$env" "$region"`,
-					Args: []Arg{
+					Arguments: []Argument{
 						{Name: "env", Description: "target environment"},
 						{Name: "region", Default: lit("us-east-1")},
 						{Name: "empty-default", Default: lit("")},
@@ -136,12 +136,12 @@ commands:
 			},
 		},
 		{
-			name: "command with flags",
+			name: "command with options",
 			content: `
 commands:
   deploy:
     run: ./deploy.sh
-    flags:
+    options:
       - name: force
         type: bool
         description: skip confirmation
@@ -156,7 +156,7 @@ commands:
 			want: map[string]Command{
 				"deploy": {
 					Run: "./deploy.sh",
-					Flags: []Flag{
+					Options: []Option{
 						{Name: "force", Type: "bool", Description: "skip confirmation"},
 						{Name: "from", Default: lit("2026-01-01")},
 						{Name: "mode", Type: "string"},
@@ -209,11 +209,11 @@ commands:
     env:
       STAMP:
         run: date +%s
-    args:
+    arguments:
       - name: date
         default:
           run: echo "$TODAY"
-    flags:
+    options:
       - name: from
         default:
           run: echo start
@@ -222,10 +222,10 @@ commands:
 			want: map[string]Command{
 				"report": {
 					Env: map[string]Value{"STAMP": {Run: "date +%s"}},
-					Args: []Arg{
+					Arguments: []Argument{
 						{Name: "date", Default: dyn(`echo "$TODAY"`)},
 					},
-					Flags: []Flag{
+					Options: []Option{
 						{Name: "from", Default: dyn("echo start")},
 					},
 					Run: `echo "$1"`,
@@ -249,8 +249,8 @@ commands:
 			wantErr: true,
 		},
 		{
-			name:    "bool flag with dynamic default",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: force\n        type: bool\n        default:\n          run: echo true\n",
+			name:    "bool option with dynamic default",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: force\n        type: bool\n        default:\n          run: echo true\n",
 			wantErr: true,
 		},
 		{
@@ -269,63 +269,63 @@ commands:
 			wantErr: true,
 		},
 		{
-			name:    "args without run",
-			content: "commands:\n  deploy:\n    args:\n      - name: env\n    commands:\n      staging:\n        run: ./deploy.sh staging\n",
+			name:    "arguments without run",
+			content: "commands:\n  deploy:\n    arguments:\n      - name: env\n    commands:\n      staging:\n        run: ./deploy.sh staging\n",
 			wantErr: true,
 		},
 		{
-			name:    "arg without name",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - default: prod\n",
+			name:    "argument without name",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    arguments:\n      - default: prod\n",
 			wantErr: true,
 		},
 		{
-			name:    "duplicate arg names",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - name: env\n      - name: env\n",
+			name:    "duplicate argument names",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    arguments:\n      - name: env\n      - name: env\n",
 			wantErr: true,
 		},
 		{
-			name:    "required arg after default",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - name: env\n        default: prod\n      - name: region\n",
+			name:    "required argument after default",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    arguments:\n      - name: env\n        default: prod\n      - name: region\n",
 			wantErr: true,
 		},
 		{
-			name:    "flags without run",
-			content: "commands:\n  deploy:\n    flags:\n      - name: force\n        type: bool\n    commands:\n      staging:\n        run: ./deploy.sh staging\n",
+			name:    "options without run",
+			content: "commands:\n  deploy:\n    options:\n      - name: force\n        type: bool\n    commands:\n      staging:\n        run: ./deploy.sh staging\n",
 			wantErr: true,
 		},
 		{
-			name:    "flag without name",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - type: bool\n",
+			name:    "option without name",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - type: bool\n",
 			wantErr: true,
 		},
 		{
-			name:    "duplicate flag names",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: force\n      - name: force\n",
+			name:    "duplicate option names",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: force\n      - name: force\n",
 			wantErr: true,
 		},
 		{
-			name:    "flag colliding with arg name",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    args:\n      - name: env\n    flags:\n      - name: env\n",
+			name:    "option colliding with argument name",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    arguments:\n      - name: env\n    options:\n      - name: env\n",
 			wantErr: true,
 		},
 		{
-			name:    "flag with invalid type",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: count\n        type: int\n",
+			name:    "option with invalid type",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: count\n        type: int\n",
 			wantErr: true,
 		},
 		{
-			name:    "bool flag with default",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: force\n        type: bool\n        default: \"true\"\n",
+			name:    "bool option with default",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: force\n        type: bool\n        default: \"true\"\n",
 			wantErr: true,
 		},
 		{
-			name:    "flag name containing equals",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: \"a=b\"\n",
+			name:    "option name containing equals",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: \"a=b\"\n",
 			wantErr: true,
 		},
 		{
-			name:    "flag name with leading dash",
-			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    flags:\n      - name: \"-x\"\n",
+			name:    "option name with leading dash",
+			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: \"-x\"\n",
 			wantErr: true,
 		},
 		{
