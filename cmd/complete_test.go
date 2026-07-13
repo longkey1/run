@@ -81,6 +81,12 @@ func TestCompleteCommands(t *testing.T) {
 			args: []string{"optcmd", "--from"},
 		},
 		{
+			name:       "typed unknown option is not a pending value",
+			args:       []string{"optcmd", "--bogus"},
+			toComplete: "--",
+			want:       []string{"--force", "--from", "--label", "--help\tshow this help"},
+		},
+		{
 			name:       "pending value looking like an option gets no candidates",
 			args:       []string{"optcmd", "t", "--label"},
 			toComplete: "--f",

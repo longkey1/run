@@ -255,6 +255,35 @@ func TestFind(t *testing.T) {
 		}
 	})
 
+	t.Run("missing home directory is ignored when a local file exists", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("RUN_CONFIG", "")
+		// An empty HOME makes os.UserHomeDir fail: there is no global
+		// file to merge, but the local file still resolves.
+		t.Setenv("HOME", "")
+
+		cmdFile := filepath.Join(root, "project", ".run.yaml")
+		writeFile(t, cmdFile, "commands: {}\n")
+
+		sources, err := Find(filepath.Join(root, "project"))
+		if err != nil {
+			t.Fatalf("Find() error = %v", err)
+		}
+		if got := singleFile(t, sources); got.Path != cmdFile {
+			t.Errorf("Find() path = %q, want %q", got.Path, cmdFile)
+		}
+	})
+
+	t.Run("missing home directory with no local file is an error", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("RUN_CONFIG", "")
+		t.Setenv("HOME", "")
+
+		if _, err := Find(root); err == nil {
+			t.Error("Find() error = nil, want error")
+		}
+	})
+
 	t.Run("no command file found", func(t *testing.T) {
 		root := t.TempDir()
 		t.Setenv("RUN_CONFIG", "")

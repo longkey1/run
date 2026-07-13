@@ -13,9 +13,6 @@ import (
 func lit(s string) *Value { return &Value{Literal: s} }
 func dyn(s string) *Value { return &Value{Run: s} }
 
-// boolp builds a pointer for expected inherit_env values.
-func boolp(b bool) *bool { return &b }
-
 // writeFile creates a file with the given content, creating parent
 // directories as needed.
 func writeFile(t *testing.T, path, content string) {
@@ -252,6 +249,11 @@ commands:
 			wantErr: true,
 		},
 		{
+			name:    "dynamic value with non-scalar run",
+			content: "commands:\n  build:\n    run: go build\n    env:\n      A:\n        run: [date]\n",
+			wantErr: true,
+		},
+		{
 			name:    "bool option with dynamic default",
 			content: "commands:\n  deploy:\n    run: ./deploy.sh\n    options:\n      - name: force\n        type: bool\n        default:\n          run: echo true\n",
 			wantErr: true,
@@ -483,11 +485,11 @@ commands:
 `,
 			want: map[string]Command{
 				"isolated": {
-					InheritEnv: boolp(false),
+					InheritEnv: new(false),
 					PassEnv:    []string{"FOO", "BAR_*"},
 					Run:        "./run.sh",
 					Commands: map[string]Command{
-						"open": {InheritEnv: boolp(true), Run: "./open.sh"},
+						"open": {InheritEnv: new(true), Run: "./open.sh"},
 					},
 				},
 			},
@@ -850,12 +852,12 @@ commands:
 			want: map[string]Command{
 				"local": {Run: "echo local"},
 				"inc": {
-					InheritEnv: boolp(false),
+					InheritEnv: new(false),
 					PassEnv:    []string{"B", "A_*"},
 					Run:        "echo inc",
 				},
 				"own": {
-					InheritEnv: boolp(true),
+					InheritEnv: new(true),
 					PassEnv:    []string{"A_*"},
 					Run:        "echo own",
 				},

@@ -118,6 +118,24 @@ commands:
         env:
           X: literal
         run: echo "$X"
+  detailed:
+    arguments:
+      - name: region
+        description: target region
+        default: us-east-1
+      - name: suffix
+        default: ""
+    options:
+      - name: from
+        description: start date
+        default: "2026-01-01"
+    run: echo x
+  dynfailopt:
+    options:
+      - name: v
+        default:
+          run: exit 2
+    run: echo unreachable
   described:
     description: Deploy the app
     arguments:
@@ -351,6 +369,16 @@ func TestRunCommand(t *testing.T) {
 			wantErr: `command "dynfaildefault": default for argument "v"`,
 		},
 		{
+			name:    "dynamic option default failure",
+			args:    []string{"dynfailopt"},
+			wantErr: `command "dynfailopt": default for option --v`,
+		},
+		{
+			name:    "group without run lists its subcommands",
+			args:    []string{"group"},
+			wantOut: "  group sub\n",
+		},
+		{
 			name:    "overridden dynamic env never runs",
 			args:    []string{"dynoverride", "inner"},
 			wantOut: "literal\n",
@@ -389,6 +417,66 @@ func TestRunCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A "--" with nothing before it leaves no command path, so runCommand
+// falls back to the command list like a bare "run".
+func TestRunCommandOnlyDashDashListsCommands(t *testing.T) {
+	out, err := execCommand(t, []string{"--"})
+	if err != nil {
+		t.Fatalf("runCommand() error = %v", err)
+	}
+	if !strings.Contains(out, "deploy <env> [region]") {
+		t.Errorf("runCommand() output = %q, want command list", out)
+	}
+}
+
+// A config.Find failure (both local file forms in the same directory)
+// must surface through every entry point that loads command files;
+// completion degrades to no candidates instead.
+func TestConfigFindErrorPropagates(t *testing.T) {
+	dir := t.TempDir()
+	writeLocal(t, filepath.Join(dir, ".run.yaml"))
+	writeLocal(t, filepath.Join(dir, ".run", "run.yaml"))
+	t.Setenv("RUN_CONFIG", "")
+	t.Chdir(dir)
+
+	newCmd := func() *cobra.Command {
+		cmd := &cobra.Command{}
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		return cmd
+	}
+	const want = "keep only one"
+	assertErr := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want containing %q", err, want)
+		}
+	}
+
+	t.Run("runList", func(t *testing.T) {
+		assertErr(t, runList(newCmd()))
+	})
+	t.Run("runListJSON", func(t *testing.T) {
+		assertErr(t, runListJSON(newCmd()))
+	})
+	t.Run("runLint", func(t *testing.T) {
+		assertErr(t, runLint(newCmd()))
+	})
+	t.Run("selfPath", func(t *testing.T) {
+		_, err := selfPath("root")
+		assertErr(t, err)
+	})
+	t.Run("completeCommands", func(t *testing.T) {
+		names, directive := completeCommands(rootCmd, nil, "")
+		if names != nil {
+			t.Errorf("completeCommands() = %v, want no candidates", names)
+		}
+		if directive != cobra.ShellCompDirectiveNoFileComp {
+			t.Errorf("completeCommands() directive = %v, want NoFileComp", directive)
+		}
+	})
 }
 
 func TestRunCommandHelp(t *testing.T) {
@@ -479,6 +567,21 @@ Arguments:
 
 Options:
   --from <from>  (default: dynamic)
+  --help         show this help
+`,
+		},
+		{
+			name: "description and default joined, empty default quoted",
+			args: []string{"detailed", "--help"},
+			wantOut: `Usage:
+  run detailed [region] [suffix] [--from <from>]
+
+Arguments:
+  [region]  target region (default: us-east-1)
+  [suffix]  (default: "")
+
+Options:
+  --from <from>  start date (default: 2026-01-01)
   --help         show this help
 `,
 		},

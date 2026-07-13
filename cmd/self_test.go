@@ -45,6 +45,16 @@ func execRootWith(t *testing.T, content string, args []string) (string, error) {
 	return out.String(), err
 }
 
+func TestRootNoArgsListsCommands(t *testing.T) {
+	out, err := execRoot(t, []string{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(out, "deploy <env> [region]") {
+		t.Errorf("Execute() output = %q, want command list", out)
+	}
+}
+
 func TestSelfVersion(t *testing.T) {
 	out, err := execRoot(t, []string{"self", "version"})
 	if err != nil {
@@ -273,6 +283,20 @@ func TestSelfLintReportsAllFiles(t *testing.T) {
 		if !strings.Contains(errOut.String(), want) {
 			t.Errorf("runLint() stderr = %q, want it to contain %q", errOut.String(), want)
 		}
+	}
+}
+
+func TestSelfCompletionShells(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		t.Run(shell, func(t *testing.T) {
+			out, err := execRoot(t, []string{"self", "completion", shell})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if !strings.Contains(out, "run") {
+				t.Errorf("Execute() output = %q, want a completion script for run", out)
+			}
+		})
 	}
 }
 

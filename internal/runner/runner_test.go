@@ -173,6 +173,57 @@ func TestCaptureCustomShell(t *testing.T) {
 	}
 }
 
+func TestExitErrorMessage(t *testing.T) {
+	t.Parallel()
+
+	err := &ExitError{Code: 3}
+	if want := "command failed with exit code 3"; err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
+	}
+}
+
+// A shell that cannot be started fails before the command runs, so
+// there is no exit code to propagate: the error must stay a plain
+// error, not an *ExitError.
+func TestRunShellNotFound(t *testing.T) {
+	t.Parallel()
+
+	shell := filepath.Join(t.TempDir(), "nosuch")
+	err := Run(shell, "echo hi", t.TempDir(), nil, nil, nil, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("Run() error = nil, want error")
+	}
+	if _, ok := errors.AsType[*ExitError](err); ok {
+		t.Errorf("Run() error = %v, want a plain error, not *ExitError", err)
+	}
+}
+
+func TestCaptureDefaultShell(t *testing.T) {
+	t.Parallel()
+
+	out, err := Capture("", `printf 'a\n\n'`, t.TempDir(), nil, io.Discard)
+	if err != nil {
+		t.Fatalf("Capture() error = %v", err)
+	}
+	if want := "a"; out != want {
+		t.Errorf("Capture() = %q, want %q", out, want)
+	}
+}
+
+// A captured command's failure is a plain error, never an *ExitError:
+// its exit code must not masquerade as the run command's own.
+func TestCaptureFailureIsPlainError(t *testing.T) {
+	t.Parallel()
+
+	_, err := Capture("", "exit 5", t.TempDir(), nil, io.Discard)
+	if err == nil {
+		t.Fatal("Capture() error = nil, want error")
+	}
+	if _, ok := errors.AsType[*ExitError](err); ok {
+		t.Errorf("Capture() error = %v, want a plain error, not *ExitError", err)
+	}
+}
+
 func TestRunStderr(t *testing.T) {
 	t.Parallel()
 
