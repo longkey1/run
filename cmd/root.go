@@ -573,9 +573,7 @@ func genCompletion(cmd *cobra.Command, shell string) error {
 		return root.GenZshCompletion(out)
 	case "fish":
 		return root.GenFishCompletion(out, true)
-	case "powershell":
-		return root.GenPowerShellCompletionWithDesc(out)
 	default:
-		return fmt.Errorf("unsupported shell %q (supported: bash, zsh, fish, powershell)", shell)
+		return fmt.Errorf("unsupported shell %q (supported: bash, zsh, fish)", shell)
 	}
 }

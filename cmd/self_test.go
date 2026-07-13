@@ -287,7 +287,7 @@ func TestSelfLintReportsAllFiles(t *testing.T) {
 }
 
 func TestSelfCompletionShells(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
 		t.Run(shell, func(t *testing.T) {
 			out, err := execRoot(t, []string{"self", "completion", shell})
 			if err != nil {

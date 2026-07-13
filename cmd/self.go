@@ -89,7 +89,7 @@ var selfCompletionCmd = &cobra.Command{
 	Use:       "completion <shell>",
 	Short:     "Generate shell completion script",
 	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
+	ValidArgs: []string{"bash", "zsh", "fish"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return genCompletion(cmd, args[0])
 	},

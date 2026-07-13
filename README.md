@@ -307,7 +307,7 @@ run self list              # list commands (same as plain `run`)
 run self list --json       # print the full command tree as JSON
 run self lint              # validate all command files without running anything
 run self version           # show version information
-run self completion zsh    # generate shell completion (bash|zsh|fish|powershell)
+run self completion zsh    # generate shell completion (bash|zsh|fish)
 run self path [target]     # print a run directory path (root|local|global)
 run --help                 # show run's own help
 run <command> --help       # show a command's declared help
