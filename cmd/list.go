@@ -47,9 +47,9 @@ func writeCommands(w io.Writer, cmds map[string]config.Command, prefix string) {
 		if c.Run != "" {
 			label := full + argumentSignature(c.Arguments) + optionSignature(c.Options)
 			if c.Description == "" {
-				fmt.Fprintf(w, "  %s\n", label)
+				_, _ = fmt.Fprintf(w, "  %s\n", label)
 			} else {
-				fmt.Fprintf(w, "  %s\t- %s\n", label, c.Description)
+				_, _ = fmt.Fprintf(w, "  %s\t- %s\n", label, c.Description)
 			}
 		}
 		writeCommands(w, c.Commands, full)
