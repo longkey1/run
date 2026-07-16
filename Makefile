@@ -24,6 +24,10 @@ fmt: ## Format code
 vet: ## Vet code
 	go vet ./...
 
+.PHONY: lint
+lint: ## Run golangci-lint (version managed by go.mod tool directive)
+	go tool golangci-lint run
+
 .PHONY: tidy
 tidy: ## Tidy dependencies
 	go mod tidy
@@ -115,12 +119,10 @@ re-release: ## Rerelease target with tag argument. Usage: make re-release tag=<t
 	fi; \
 	echo "Target tag: $$TAG"; \
 	if [ "$(dryrun)" = "false" ]; then \
-		echo "Deleting GitHub release..."; \
-		gh release delete "$$TAG" -y; \
+		echo "Deleting GitHub release and associated tag..."; \
+		gh release delete "$$TAG" --cleanup-tag -y || true; \
 		echo "Deleting local tag..."; \
-		git tag -d "$$TAG"; \
-		echo "Deleting remote tag..."; \
-		git push origin ":refs/tags/$$TAG" --no-verify --force; \
+		git tag -d "$$TAG" || true; \
 		echo "Recreating tag on HEAD..."; \
 		git tag -a "$$TAG" -m "Release $$TAG"; \
 		echo "Pushing tag to origin..."; \

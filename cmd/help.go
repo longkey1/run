@@ -22,27 +22,27 @@ type helpRow struct {
 // shell completion.
 func commandHelp(out io.Writer, c config.Command, name string) error {
 	if c.Description != "" {
-		fmt.Fprintf(out, "%s\n\n", c.Description)
+		_, _ = fmt.Fprintf(out, "%s\n\n", c.Description)
 	}
-	fmt.Fprintln(out, "Usage:")
+	_, _ = fmt.Fprintln(out, "Usage:")
 	if c.Run != "" {
-		fmt.Fprintf(out, "  run %s%s%s\n", name, argumentSignature(c.Arguments), optionSignature(c.Options))
+		_, _ = fmt.Fprintf(out, "  run %s%s%s\n", name, argumentSignature(c.Arguments), optionSignature(c.Options))
 	}
 	if len(c.Commands) > 0 {
-		fmt.Fprintf(out, "  run %s <command>\n", name)
+		_, _ = fmt.Fprintf(out, "  run %s <command>\n", name)
 	}
 	if len(c.Arguments) > 0 {
-		fmt.Fprintln(out, "\nArguments:")
+		_, _ = fmt.Fprintln(out, "\nArguments:")
 		writeHelpRows(out, argumentHelpRows(c.Arguments))
 	}
 	// Groups cannot declare options, so an Options section holding only
 	// --help would be noise there; runnable commands always get one.
 	if c.Run != "" {
-		fmt.Fprintln(out, "\nOptions:")
+		_, _ = fmt.Fprintln(out, "\nOptions:")
 		writeHelpRows(out, optionHelpRows(c.Options))
 	}
 	if len(c.Commands) > 0 {
-		fmt.Fprintln(out, "\nCommands:")
+		_, _ = fmt.Fprintln(out, "\nCommands:")
 		return listCommands(out, c.Commands, name)
 	}
 	return nil
@@ -90,10 +90,10 @@ func writeHelpRows(out io.Writer, rows []helpRow) {
 	}
 	for _, r := range rows {
 		if r.detail == "" {
-			fmt.Fprintf(out, "  %s\n", r.label)
+			_, _ = fmt.Fprintf(out, "  %s\n", r.label)
 			continue
 		}
-		fmt.Fprintf(out, "  %-*s  %s\n", width, r.label, r.detail)
+		_, _ = fmt.Fprintf(out, "  %-*s  %s\n", width, r.label, r.detail)
 	}
 }
 

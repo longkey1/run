@@ -66,13 +66,13 @@ func runLint(cmd *cobra.Command) error {
 	for _, f := range found {
 		if _, err := config.Load(f.Path); err != nil {
 			bad++
-			fmt.Fprintln(cmd.ErrOrStderr(), err)
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), err)
 		}
 	}
 	if bad > 0 {
 		return fmt.Errorf("%d of %d command file(s) failed validation", bad, len(found))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "ok: %d command file(s) valid\n", len(found))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "ok: %d command file(s) valid\n", len(found))
 	return nil
 }
 
@@ -81,7 +81,7 @@ var selfVersionCmd = &cobra.Command{
 	Short: "Show version information",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(cmd.OutOrStdout(), version.Info())
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), version.Info())
 	},
 }
 
@@ -124,7 +124,7 @@ file is not used then.`,
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), path)
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), path)
 		return nil
 	},
 }
