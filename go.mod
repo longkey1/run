@@ -1,6 +1,6 @@
 module github.com/longkey1/run
 
-go 1.26
+go 1.27
 
 require (
 	github.com/spf13/cobra v1.10.2
