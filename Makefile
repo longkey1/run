@@ -123,6 +123,8 @@ re-release: ## Rerelease target with tag argument. Usage: make re-release tag=<t
 		gh release delete "$$TAG" --cleanup-tag -y || true; \
 		echo "Deleting local tag..."; \
 		git tag -d "$$TAG" || true; \
+		echo "Deleting remote tag..."; \
+		git push origin ":refs/tags/$$TAG" --no-verify || true; \
 		echo "Recreating tag on HEAD..."; \
 		git tag -a "$$TAG" -m "Release $$TAG"; \
 		echo "Pushing tag to origin..."; \
